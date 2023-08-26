@@ -22,6 +22,11 @@ import {
   __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED as Internals,
 } from './';
 
+
+// 3가지를 나눈 이유가 있을 것이다.
+// Element : 가장 일반적인 Document를 상속 받은 Element [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element)
+// Document : 
+// DocumentFragment : 
 export function createRoot(
   container: Element | Document | DocumentFragment,
   options?: CreateRootOptions,
