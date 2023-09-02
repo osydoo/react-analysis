@@ -13,13 +13,21 @@ import type {
     FiberRoot,
     SuspenseHydrationCallbacks,
     TransitionTracingCallbacks,
-} from './packages/react-reconciler/src/ReactInternalTypes';
+} from '/react-reconciler/src/ReactInternalTypes';
+import {
+  NoLane,
+  NoLanes,
+  NoTimestamp,
+  TotalLanes,
+  createLaneMap,
+} from '/react-reconciler/src/ReactFiberLane';
 
 /**
  * 참고 :
  * arguments에 [변수] = [변수] = 1라면 상위 함수에서 로컬이나 global로 생겨난 변수임
  * = 값? 이라면 null이 가능임
- * [변수] = [변수]는 이름이 달라진 변수임
+ * [변수] = [변수]는 할당이 그대로 이루어진 변수임
+ *  주성 조건문 한줄마다 
  * [변수] = [변수] = 1! 같이 !가 붙어있다면 상수임
  * [변수] = [변수] = 1값에 | 이 붙어있다면 전자는 createRoot, 후자는 hydrateRoot임
  * 
@@ -75,6 +83,13 @@ const createFiberRoot.arguments: FiberRoot = {
     /** ----------------------- */
 }
 
+// ReactFilber.js
+const createHostRootFiber.arguments: Fiber = {
+    tag, // createContainer.args.tag = 1
+    isStrictMode, // createContainer.args.isStrictMode
+    concurrentUpdatesByDefaultOverride, // createContainer.args.concurrentUpdatesByDefaultOverride
+}
+
 
 /**
  * 실제 함수 동작
@@ -82,25 +97,90 @@ const createFiberRoot.arguments: FiberRoot = {
 
 function createRoot(container, options?): RootType {
     let isStrictMode = options.untable_strictMode;
-    let concurrentUpdatesByDefaultOverride = options.unstable_concurrentUpdatesByDefault;
+    let concurrentUpdatesByDefaultOverride = allowConcurrentByDefault && options.unstable_concurrentUpdatesByDefault;
     let transitionCallbacks = options.unstable_transitionCallbacks;
     // 한 페이지에 root가 여러개 일때 root를 구분하는 용도
     let identifierPrefix = options.identifierPrefix;
     // 리엑트에 에러 발생시 실행 함수
     let onRecoverableError = options.onRecoverableError;
 
-    // createContainer() : createFiberRoot를 하기전 hydrate와 구분하기 위한 초기화
-    // createFiberRoot()
-    // new FiberRootNode()
-    
-    // dbsehddn 해야함!
-    root = new FiberRootNode(
+    //  createContainer(){ : createFiberRoot를 하기전 hydrate와 구분하기 위한 초기화
+    //      createFiberRoot(){
+    //          new FiberRootNode()
+    //          createHostRootFiber()
+    // tag === 1 / 
+    mode = 0b0000000 // tag === 1
+            |= 0b0011000 // isStrictMode || createRootStrictEffectsByDefault, strictEffectsMode 여부 - 없앨 예정
+                
+    root = {
+        tag = ConcurrentRoot = 1,
         containerInfo,
-        tag,
-        hydrate,
+        pendingChildren = null,
+        pingCache = null,
+        finishedWorkd = null,
+        timeoutHandle = noTimeout = -1, // 테스트용 옵션
+        cancelPendingCommit = null,
+        context = null;
+        pendingContext = null,
+        next = null,
+        callbackNode = null,
+        callbackPrioirty = NoLanes = 0b0000000000000000000000000000000,
+        expirationTimes = [-1].length(31),
+
+        pendingLanes = NoLanes,
+        suspendedLanes = NoLanes,
+        pingedLanes = NoLanes,
+        expiredLanes = NoLanes,
+        finishedLanes = NoLanes,
+        errorRecoveryDisabledLanes = NoLanes,
+        shellSuspendCounter = 0,
+
+        entangledLanes = NoLanes,
+        entanglements = [NoLanes].length(31),
+
+        hiddenUpdates = [null].length(31),
+
         identifierPrefix,
         onRecoverableError,
-    )
+
+        /** 
+         * new FiberRootNode: if endableCache = true! 
+        */
+        pooledCache = null,
+        pooledCacheLanes = NoLanes,
+        
+        /** 
+         * 특징 : 동작안하는데, 아직 삭제 못 함 Transition Tracing proposal로 대체 예정
+         * 용도 : suspense에 콜백 property를 추가해 업데이트 queue에 어떤 promise가 있는지 알려 사용자에게 로딩을 보여줍니다.
+         * new FiberRootNode: if endableSuspenseCallback = false!
+         * createFiberRoot(): if enableSuspenseCallback = false! 
+        */
+        hydrationCallbacks = hydrationCallbacks = null,
+
+        incomplateTransitions = new Map(),
+
+        /** 
+         * new FiberRootNode: if enableTransitionTracing = false!,  
+        */
+        transitioncallbacks = null,
+        transitionLanesMap = [null].length(31),
+
+        /** 
+         * __Profile__ = false!
+         * new FiberRootNode: if enableProfilerTimer = __Profile__ && enableProfilerCommiHooks = __Profile__ 
+        */
+        effectDuration = 0,
+        passiveEffectDuration = 0,
+
+        /** 
+         * new FiberRootNode: if enableUpdaterTracking = __Profile__ 
+        */
+        memoizedUpdater = new Set(),
+        pendingUpdatersLaneMap = [new Set()].length(31),
+
+        // hydrate는 __DEV__에서만 사용
+    }
+    
     return root = createFiberRoot(
         ...createContainer.arguments,
         hydrate = false,
