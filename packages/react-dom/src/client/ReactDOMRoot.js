@@ -196,6 +196,7 @@ export function createRoot(
   let onRecoverableError = defaultOnRecoverableError;
   let transitionCallbacks = null;
 
+  // 옵션 설정
   if (options !== null && options !== undefined) {
     if (__DEV__) {
       if ((options: any).hydrate) {
