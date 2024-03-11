@@ -152,7 +152,7 @@ function createRoot(container, options?): RootType {
      *  }
      */
     
-    return root = {
+    const root = {
         tag: ConcurrentRoot: 1,
         containerInfo,
         pendingChildren: null,
@@ -1266,6 +1266,9 @@ function hydrateRoot(container, initialChildren, options?): RootType {
         this._internalRoot = internalRoot
     }
 }
+
+
+
 
 window = {
     React: {
