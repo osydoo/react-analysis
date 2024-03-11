@@ -7,23 +7,39 @@
  * @flow
  */
 
-import type {Thenable} from 'shared/ReactTypes';
+import type {
+  Thenable,
+  ReactDebugInfo,
+  ReactComponentInfo,
+  ReactAsyncInfo,
+} from 'shared/ReactTypes';
 import type {LazyComponent} from 'react/src/ReactLazy';
 
 import type {
   ClientReference,
   ClientReferenceMetadata,
-  SSRManifest,
+  SSRModuleMap,
   StringDecoder,
+  ModuleLoading,
 } from './ReactFlightClientConfig';
 
-import type {HintModel} from 'react-server/src/ReactFlightServerConfig';
+import type {
+  HintCode,
+  HintModel,
+} from 'react-server/src/ReactFlightServerConfig';
 
-import type {CallServerCallback} from './ReactFlightReplyClient';
+import type {
+  CallServerCallback,
+  EncodeFormActionCallback,
+} from './ReactFlightReplyClient';
 
 import type {Postpone} from 'react/src/ReactPostpone';
 
-import {enableBinaryFlight, enablePostpone} from 'shared/ReactFeatureFlags';
+import {
+  enableBinaryFlight,
+  enablePostpone,
+  enableRefAsProp,
+} from 'shared/ReactFeatureFlags';
 
 import {
   resolveClientReference,
@@ -33,13 +49,11 @@ import {
   readPartialStringChunk,
   readFinalStringChunk,
   createStringDecoder,
-  usedWithSSR,
+  prepareDestinationForModule,
+  printToConsole,
 } from './ReactFlightClientConfig';
 
-import {
-  encodeFormAction,
-  knownServerReferences,
-} from './ReactFlightReplyClient';
+import {registerServerReference} from './ReactFlightReplyClient';
 
 import {
   REACT_LAZY_TYPE,
@@ -47,9 +61,7 @@ import {
   REACT_POSTPONE_TYPE,
 } from 'shared/ReactSymbols';
 
-import {getOrCreateServerContext} from 'shared/ReactServerContextRegistry';
-
-export type {CallServerCallback};
+export type {CallServerCallback, EncodeFormActionCallback};
 
 type UninitializedModel = string;
 
@@ -71,6 +83,7 @@ type RowParserState = 0 | 1 | 2 | 3 | 4;
 
 const PENDING = 'pending';
 const BLOCKED = 'blocked';
+const CYCLIC = 'cyclic';
 const RESOLVED_MODEL = 'resolved_model';
 const RESOLVED_MODULE = 'resolved_module';
 const INITIALIZED = 'fulfilled';
@@ -81,6 +94,7 @@ type PendingChunk<T> = {
   value: null | Array<(T) => mixed>,
   reason: null | Array<(mixed) => mixed>,
   _response: Response,
+  _debugInfo?: null | ReactDebugInfo,
   then(resolve: (T) => mixed, reject: (mixed) => mixed): void,
 };
 type BlockedChunk<T> = {
@@ -88,6 +102,15 @@ type BlockedChunk<T> = {
   value: null | Array<(T) => mixed>,
   reason: null | Array<(mixed) => mixed>,
   _response: Response,
+  _debugInfo?: null | ReactDebugInfo,
+  then(resolve: (T) => mixed, reject: (mixed) => mixed): void,
+};
+type CyclicChunk<T> = {
+  status: 'cyclic',
+  value: null | Array<(T) => mixed>,
+  reason: null | Array<(mixed) => mixed>,
+  _response: Response,
+  _debugInfo?: null | ReactDebugInfo,
   then(resolve: (T) => mixed, reject: (mixed) => mixed): void,
 };
 type ResolvedModelChunk<T> = {
@@ -95,6 +118,7 @@ type ResolvedModelChunk<T> = {
   value: UninitializedModel,
   reason: null,
   _response: Response,
+  _debugInfo?: null | ReactDebugInfo,
   then(resolve: (T) => mixed, reject: (mixed) => mixed): void,
 };
 type ResolvedModuleChunk<T> = {
@@ -102,6 +126,7 @@ type ResolvedModuleChunk<T> = {
   value: ClientReference<T>,
   reason: null,
   _response: Response,
+  _debugInfo?: null | ReactDebugInfo,
   then(resolve: (T) => mixed, reject: (mixed) => mixed): void,
 };
 type InitializedChunk<T> = {
@@ -109,6 +134,7 @@ type InitializedChunk<T> = {
   value: T,
   reason: null,
   _response: Response,
+  _debugInfo?: null | ReactDebugInfo,
   then(resolve: (T) => mixed, reject: (mixed) => mixed): void,
 };
 type ErroredChunk<T> = {
@@ -116,11 +142,13 @@ type ErroredChunk<T> = {
   value: null,
   reason: mixed,
   _response: Response,
+  _debugInfo?: null | ReactDebugInfo,
   then(resolve: (T) => mixed, reject: (mixed) => mixed): void,
 };
 type SomeChunk<T> =
   | PendingChunk<T>
   | BlockedChunk<T>
+  | CyclicChunk<T>
   | ResolvedModelChunk<T>
   | ResolvedModuleChunk<T>
   | InitializedChunk<T>
@@ -132,6 +160,9 @@ function Chunk(status: any, value: any, reason: any, response: Response) {
   this.value = value;
   this.reason = reason;
   this._response = response;
+  if (__DEV__) {
+    this._debugInfo = null;
+  }
 }
 // We subclass Promise.prototype so that we get other methods like .catch
 Chunk.prototype = (Object.create(Promise.prototype): any);
@@ -159,6 +190,7 @@ Chunk.prototype.then = function <T>(
       break;
     case PENDING:
     case BLOCKED:
+    case CYCLIC:
       if (resolve) {
         if (chunk.value === null) {
           chunk.value = ([]: Array<(T) => mixed>);
@@ -179,8 +211,11 @@ Chunk.prototype.then = function <T>(
 };
 
 export type Response = {
-  _bundlerConfig: SSRManifest,
+  _bundlerConfig: SSRModuleMap,
+  _moduleLoading: ModuleLoading,
   _callServer: CallServerCallback,
+  _encodeFormAction: void | EncodeFormActionCallback,
+  _nonce: ?string,
   _chunks: Map<number, SomeChunk<any>>,
   _fromJSON: (key: string, value: JSONValue) => any,
   _stringDecoder: StringDecoder,
@@ -208,6 +243,7 @@ function readChunk<T>(chunk: SomeChunk<T>): T {
       return chunk.value;
     case PENDING:
     case BLOCKED:
+    case CYCLIC:
       // eslint-disable-next-line no-throw-literal
       throw ((chunk: any): Thenable<T>);
     default:
@@ -256,6 +292,7 @@ function wakeChunkIfInitialized<T>(
       break;
     case PENDING:
     case BLOCKED:
+    case CYCLIC:
       chunk.value = resolveListeners;
       chunk.reason = rejectListeners;
       break;
@@ -362,8 +399,19 @@ function initializeModelChunk<T>(chunk: ResolvedModelChunk<T>): void {
   const prevBlocked = initializingChunkBlockedModel;
   initializingChunk = chunk;
   initializingChunkBlockedModel = null;
+
+  const resolvedModel = chunk.value;
+
+  // We go to the CYCLIC state until we've fully resolved this.
+  // We do this before parsing in case we try to initialize the same chunk
+  // while parsing the model. Such as in a cyclic reference.
+  const cyclicChunk: CyclicChunk<T> = (chunk: any);
+  cyclicChunk.status = CYCLIC;
+  cyclicChunk.value = null;
+  cyclicChunk.reason = null;
+
   try {
-    const value: T = parseModel(chunk._response, chunk.value);
+    const value: T = parseModel(chunk._response, resolvedModel);
     if (
       initializingChunkBlockedModel !== null &&
       initializingChunkBlockedModel.deps > 0
@@ -376,9 +424,13 @@ function initializeModelChunk<T>(chunk: ResolvedModelChunk<T>): void {
       blockedChunk.value = null;
       blockedChunk.reason = null;
     } else {
+      const resolveListeners = cyclicChunk.value;
       const initializedChunk: InitializedChunk<T> = (chunk: any);
       initializedChunk.status = INITIALIZED;
       initializedChunk.value = value;
+      if (resolveListeners !== null) {
+        wakeChunk(resolveListeners, value);
+      }
     }
   } catch (error) {
     const erroredChunk: ErroredChunk<T> = (chunk: any);
@@ -416,24 +468,46 @@ export function reportGlobalError(response: Response, error: Error): void {
   });
 }
 
+function nullRefGetter() {
+  if (__DEV__) {
+    return null;
+  }
+}
+
 function createElement(
   type: mixed,
   key: mixed,
   props: mixed,
 ): React$Element<any> {
-  const element: any = {
-    // This tag allows us to uniquely identify this as a React Element
-    $$typeof: REACT_ELEMENT_TYPE,
+  let element: any;
+  if (__DEV__ && enableRefAsProp) {
+    // `ref` is non-enumerable in dev
+    element = ({
+      $$typeof: REACT_ELEMENT_TYPE,
+      type,
+      key,
+      props,
+      _owner: null,
+    }: any);
+    Object.defineProperty(element, 'ref', {
+      enumerable: false,
+      get: nullRefGetter,
+    });
+  } else {
+    element = ({
+      // This tag allows us to uniquely identify this as a React Element
+      $$typeof: REACT_ELEMENT_TYPE,
 
-    // Built-in properties that belong on the element
-    type: type,
-    key: key,
-    ref: null,
-    props: props,
+      type,
+      key,
+      ref: null,
+      props,
 
-    // Record the component responsible for creating this element.
-    _owner: null,
-  };
+      // Record the component responsible for creating this element.
+      _owner: null,
+    }: any);
+  }
+
   if (__DEV__) {
     // We don't really need to add any of these but keeping them for good measure.
     // Unfortunately, _store is enumerable in jest matchers so for equality to
@@ -447,16 +521,11 @@ function createElement(
       writable: true,
       value: true, // This element has already been validated on the server.
     });
-    Object.defineProperty(element, '_self', {
+    // debugInfo contains Server Component debug information.
+    Object.defineProperty(element, '_debugInfo', {
       configurable: false,
       enumerable: false,
-      writable: false,
-      value: null,
-    });
-    Object.defineProperty(element, '_source', {
-      configurable: false,
-      enumerable: false,
-      writable: false,
+      writable: true,
       value: null,
     });
   }
@@ -471,6 +540,12 @@ function createLazyChunkWrapper<T>(
     _payload: chunk,
     _init: readChunk,
   };
+  if (__DEV__) {
+    // Ensure we have a live array to track future debug info.
+    const chunkDebugInfo: ReactDebugInfo =
+      chunk._debugInfo || (chunk._debugInfo = []);
+    lazyType._debugInfo = chunkDebugInfo;
+  }
   return lazyType;
 }
 
@@ -488,15 +563,18 @@ function createModelResolver<T>(
   chunk: SomeChunk<T>,
   parentObject: Object,
   key: string,
+  cyclic: boolean,
 ): (value: any) => void {
   let blocked;
   if (initializingChunkBlockedModel) {
     blocked = initializingChunkBlockedModel;
-    blocked.deps++;
+    if (!cyclic) {
+      blocked.deps++;
+    }
   } else {
     blocked = initializingChunkBlockedModel = {
-      deps: 1,
-      value: null,
+      deps: cyclic ? 0 : 1,
+      value: (null: any),
     };
   }
   return value => {
@@ -539,18 +617,13 @@ function createServerReferenceProxy<A: Iterable<any>, T>(
     }
     // Since this is a fake Promise whose .then doesn't chain, we have to wrap it.
     // TODO: Remove the wrapper once that's fixed.
-    return ((Promise.resolve(p): any): Promise<Array<any>>).then(function (
-      bound,
-    ) {
-      return callServer(metaData.id, bound.concat(args));
-    });
+    return ((Promise.resolve(p): any): Promise<Array<any>>).then(
+      function (bound) {
+        return callServer(metaData.id, bound.concat(args));
+      },
+    );
   };
-  // Expose encoder for use by SSR.
-  if (usedWithSSR) {
-    // Only expose this in builds that would actually use it. Not needed on the client.
-    (proxy: any).$$FORM_ACTION = encodeFormAction;
-  }
-  knownServerReferences.set(proxy, metaData);
+  registerServerReference(proxy, metaData, response._encodeFormAction);
   return proxy;
 }
 
@@ -598,6 +671,10 @@ function parseModelString(
       }
       case '@': {
         // Promise
+        if (value.length === 2) {
+          // Infinite promise that never resolves.
+          return new Promise(() => {});
+        }
         const id = parseInt(value.slice(2), 16);
         const chunk = getChunk(response, id);
         return chunk;
@@ -605,10 +682,6 @@ function parseModelString(
       case 'S': {
         // Symbol
         return Symbol.for(value.slice(2));
-      }
-      case 'P': {
-        // Server Context Provider
-        return getOrCreateServerContext(value.slice(2)).Provider;
       }
       case 'F': {
         // Server Reference
@@ -657,6 +730,21 @@ function parseModelString(
         // BigInt
         return BigInt(value.slice(2));
       }
+      case 'E': {
+        if (__DEV__) {
+          // In DEV mode we allow indirect eval to produce functions for logging.
+          // This should not compile to eval() because then it has local scope access.
+          try {
+            // eslint-disable-next-line no-eval
+            return (0, eval)(value.slice(2));
+          } catch (x) {
+            // We currently use this to express functions so we fail parsing it,
+            // let's just return a blank function as a place holder.
+            return function () {};
+          }
+        }
+        // Fallthrough
+      }
       default: {
         // We assume that anything else is a reference ID.
         const id = parseInt(value.slice(1), 16);
@@ -672,12 +760,44 @@ function parseModelString(
         // The status might have changed after initialization.
         switch (chunk.status) {
           case INITIALIZED:
-            return chunk.value;
+            const chunkValue = chunk.value;
+            if (__DEV__ && chunk._debugInfo) {
+              // If we have a direct reference to an object that was rendered by a synchronous
+              // server component, it might have some debug info about how it was rendered.
+              // We forward this to the underlying object. This might be a React Element or
+              // an Array fragment.
+              // If this was a string / number return value we lose the debug info. We choose
+              // that tradeoff to allow sync server components to return plain values and not
+              // use them as React Nodes necessarily. We could otherwise wrap them in a Lazy.
+              if (
+                typeof chunkValue === 'object' &&
+                chunkValue !== null &&
+                (Array.isArray(chunkValue) ||
+                  chunkValue.$$typeof === REACT_ELEMENT_TYPE) &&
+                !chunkValue._debugInfo
+              ) {
+                // We should maybe use a unique symbol for arrays but this is a React owned array.
+                // $FlowFixMe[prop-missing]: This should be added to elements.
+                Object.defineProperty(chunkValue, '_debugInfo', {
+                  configurable: false,
+                  enumerable: false,
+                  writable: true,
+                  value: chunk._debugInfo,
+                });
+              }
+            }
+            return chunkValue;
           case PENDING:
           case BLOCKED:
+          case CYCLIC:
             const parentChunk = initializingChunk;
             chunk.then(
-              createModelResolver(parentChunk, parentObject, key),
+              createModelResolver(
+                parentChunk,
+                parentObject,
+                key,
+                chunk.status === CYCLIC,
+              ),
               createModelReject(parentChunk),
             );
             return null;
@@ -712,13 +832,19 @@ function missingCall() {
 }
 
 export function createResponse(
-  bundlerConfig: SSRManifest,
+  bundlerConfig: SSRModuleMap,
+  moduleLoading: ModuleLoading,
   callServer: void | CallServerCallback,
+  encodeFormAction: void | EncodeFormActionCallback,
+  nonce: void | string,
 ): Response {
   const chunks: Map<number, SomeChunk<any>> = new Map();
   const response: Response = {
     _bundlerConfig: bundlerConfig,
+    _moduleLoading: moduleLoading,
     _callServer: callServer !== undefined ? callServer : missingCall,
+    _encodeFormAction: encodeFormAction,
+    _nonce: nonce,
     _chunks: chunks,
     _stringDecoder: createStringDecoder(),
     _fromJSON: (null: any),
@@ -777,6 +903,12 @@ function resolveModule(
   );
   const clientReference = resolveClientReference<$FlowFixMe>(
     response._bundlerConfig,
+    clientReferenceMetadata,
+  );
+
+  prepareDestinationForModule(
+    response._moduleLoading,
+    response._nonce,
     clientReferenceMetadata,
   );
 
@@ -924,13 +1056,52 @@ function resolvePostponeDev(
   }
 }
 
-function resolveHint(
+function resolveHint<Code: HintCode>(
   response: Response,
-  code: string,
+  code: Code,
   model: UninitializedModel,
 ): void {
-  const hintModel: HintModel = parseModel(response, model);
+  const hintModel: HintModel<Code> = parseModel(response, model);
   dispatchHint(code, hintModel);
+}
+
+function resolveDebugInfo(
+  response: Response,
+  id: number,
+  debugInfo: ReactComponentInfo | ReactAsyncInfo,
+): void {
+  if (!__DEV__) {
+    // These errors should never make it into a build so we don't need to encode them in codes.json
+    // eslint-disable-next-line react-internal/prod-error-codes
+    throw new Error(
+      'resolveDebugInfo should never be called in production mode. This is a bug in React.',
+    );
+  }
+  const chunk = getChunk(response, id);
+  const chunkDebugInfo: ReactDebugInfo =
+    chunk._debugInfo || (chunk._debugInfo = []);
+  chunkDebugInfo.push(debugInfo);
+}
+
+function resolveConsoleEntry(
+  response: Response,
+  value: UninitializedModel,
+): void {
+  if (!__DEV__) {
+    // These errors should never make it into a build so we don't need to encode them in codes.json
+    // eslint-disable-next-line react-internal/prod-error-codes
+    throw new Error(
+      'resolveConsoleEntry should never be called in production mode. This is a bug in React.',
+    );
+  }
+
+  const payload: [string, string, string, mixed] = parseModel(response, value);
+  const methodName = payload[0];
+  // TODO: Restore the fake stack before logging.
+  // const stackTrace = payload[1];
+  const env = payload[2];
+  const args = payload.slice(3);
+  printToConsole(methodName, args, env);
 }
 
 function mergeBuffer(
@@ -1026,7 +1197,7 @@ function processFullRow(
       case 70 /* "F" */:
         resolveTypedArray(response, id, buffer, chunk, Float32Array, 4);
         return;
-      case 68 /* "D" */:
+      case 100 /* "d" */:
         resolveTypedArray(response, id, buffer, chunk, Float64Array, 8);
         return;
       case 78 /* "N" */:
@@ -1053,7 +1224,7 @@ function processFullRow(
       return;
     }
     case 72 /* "H" */: {
-      const code = row[0];
+      const code: HintCode = (row[0]: any);
       resolveHint(response, code, row.slice(1));
       return;
     }
@@ -1075,6 +1246,25 @@ function processFullRow(
     case 84 /* "T" */: {
       resolveText(response, id, row);
       return;
+    }
+    case 68 /* "D" */: {
+      if (__DEV__) {
+        const debugInfo = JSON.parse(row);
+        resolveDebugInfo(response, id, debugInfo);
+        return;
+      }
+      // Fallthrough to share the error with Console entries.
+    }
+    case 87 /* "W" */: {
+      if (__DEV__) {
+        resolveConsoleEntry(response, row);
+        return;
+      }
+      throw new Error(
+        'Failed to read a RSC payload created by a development version of React ' +
+          'on the server while using a production version on the client. Always use ' +
+          'matching versions on the server and the client.',
+      );
     }
     case 80 /* "P" */: {
       if (enablePostpone) {
@@ -1139,7 +1329,7 @@ export function processBinaryChunk(
               resolvedRowTag === 76 /* "L" */ ||
               resolvedRowTag === 108 /* "l" */ ||
               resolvedRowTag === 70 /* "F" */ ||
-              resolvedRowTag === 68 /* "D" */ ||
+              resolvedRowTag === 100 /* "d" */ ||
               resolvedRowTag === 78 /* "N" */ ||
               resolvedRowTag === 109 /* "m" */ ||
               resolvedRowTag === 86)) /* "V" */

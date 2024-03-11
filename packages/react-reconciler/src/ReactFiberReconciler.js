@@ -21,7 +21,7 @@ import type {
   PublicInstance,
   RendererInspectionConfig,
 } from './ReactFiberConfig';
-import type {ReactNodeList} from 'shared/ReactTypes';
+import type {ReactNodeList, ReactFormState} from 'shared/ReactTypes';
 import type {Lane} from './ReactFiberLane';
 import type {SuspenseState} from './ReactFiberSuspenseComponent';
 
@@ -209,7 +209,7 @@ function findHostInstanceWithWarning(
                 '%s was passed an instance of %s which is inside StrictMode. ' +
                 'Instead, add a ref directly to the element you want to reference. ' +
                 'Learn more about using refs safely here: ' +
-                'https://reactjs.org/link/strict-mode-find-node',
+                'https://react.dev/link/strict-mode-find-node',
               methodName,
               methodName,
               componentName,
@@ -220,7 +220,7 @@ function findHostInstanceWithWarning(
                 '%s was passed an instance of %s which renders StrictMode children. ' +
                 'Instead, add a ref directly to the element you want to reference. ' +
                 'Learn more about using refs safely here: ' +
-                'https://reactjs.org/link/strict-mode-find-node',
+                'https://react.dev/link/strict-mode-find-node',
               methodName,
               methodName,
               componentName,
@@ -265,6 +265,7 @@ export function createContainer(
     identifierPrefix,
     onRecoverableError,
     transitionCallbacks,
+    null,
   );
 }
 
@@ -280,6 +281,7 @@ export function createHydrationContainer(
   identifierPrefix: string,
   onRecoverableError: (error: mixed) => void,
   transitionCallbacks: null | TransitionTracingCallbacks,
+  formState: ReactFormState<any, any> | null,
 ): OpaqueRoot {
   const hydrate = true;
   const root = createFiberRoot(
@@ -293,6 +295,7 @@ export function createHydrationContainer(
     identifierPrefix,
     onRecoverableError,
     transitionCallbacks,
+    formState,
   );
 
   // TODO: Move this to FiberRoot constructor
@@ -365,7 +368,7 @@ export function updateContainer(
     if (__DEV__) {
       if (typeof callback !== 'function') {
         console.error(
-          'render(...): Expected the last optional `callback` argument to be a ' +
+          'Expected the last optional `callback` argument to be a ' +
             'function. Instead received: %s.',
           callback,
         );

@@ -8,8 +8,15 @@
  */
 
 import type {ReactNodeList} from 'shared/ReactTypes';
-import type {BootstrapScriptDescriptor} from 'react-dom-bindings/src/server/ReactFizzConfigDOM';
-import type {PostponedState} from 'react-server/src/ReactFizzServer';
+import type {
+  BootstrapScriptDescriptor,
+  HeadersDescriptor,
+} from 'react-dom-bindings/src/server/ReactFizzConfigDOM';
+import type {
+  PostponedState,
+  ErrorInfo,
+  PostponeInfo,
+} from 'react-server/src/ReactFizzServer';
 import type {ImportMap} from '../shared/ReactDOMTypes';
 
 import {Writable, Readable} from 'stream';
@@ -17,7 +24,7 @@ import {Writable, Readable} from 'stream';
 import ReactVersion from 'shared/ReactVersion';
 
 import {
-  createRequest,
+  createPrerenderRequest,
   startWork,
   startFlowing,
   abort,
@@ -38,10 +45,12 @@ type Options = {
   bootstrapModules?: Array<string | BootstrapScriptDescriptor>,
   progressiveChunkSize?: number,
   signal?: AbortSignal,
-  onError?: (error: mixed) => ?string,
-  onPostpone?: (reason: string) => void,
+  onError?: (error: mixed, errorInfo: ErrorInfo) => ?string,
+  onPostpone?: (reason: string, postponeInfo: PostponeInfo) => void,
   unstable_externalRuntimeSrc?: string | BootstrapScriptDescriptor,
   importMap?: ImportMap,
+  onHeaders?: (headers: HeadersDescriptor) => void,
+  maxHeadersLength?: number,
 };
 
 type StaticResult = {
@@ -88,19 +97,21 @@ function prerenderToNodeStream(
     }
     const resumableState = createResumableState(
       options ? options.identifierPrefix : undefined,
-      undefined, // nonce is not compatible with prerendered bootstrap scripts
+      options ? options.unstable_externalRuntimeSrc : undefined,
       options ? options.bootstrapScriptContent : undefined,
       options ? options.bootstrapScripts : undefined,
       options ? options.bootstrapModules : undefined,
-      options ? options.unstable_externalRuntimeSrc : undefined,
     );
-    const request = createRequest(
+    const request = createPrerenderRequest(
       children,
       resumableState,
       createRenderState(
         resumableState,
-        undefined, // nonce
+        undefined, // nonce is not compatible with prerendered bootstrap scripts
+        options ? options.unstable_externalRuntimeSrc : undefined,
         options ? options.importMap : undefined,
+        options ? options.onHeaders : undefined,
+        options ? options.maxHeadersLength : undefined,
       ),
       createRootFormatContext(options ? options.namespaceURI : undefined),
       options ? options.progressiveChunkSize : undefined,

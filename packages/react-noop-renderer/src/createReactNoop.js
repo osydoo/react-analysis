@@ -32,6 +32,7 @@ import {
   ConcurrentRoot,
   LegacyRoot,
 } from 'react-reconciler/constants';
+import {enableRefAsProp} from 'shared/ReactFeatureFlags';
 
 type Container = {
   rootID: string,
@@ -82,10 +83,8 @@ export type TransitionStatus = mixed;
 
 const NO_CONTEXT = {};
 const UPPERCASE_CONTEXT = {};
-const UPDATE_SIGNAL = {};
 if (__DEV__) {
   Object.freeze(NO_CONTEXT);
-  Object.freeze(UPDATE_SIGNAL);
 }
 
 function createReactNoop(reconciler: Function, useMutation: boolean) {
@@ -222,13 +221,11 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
 
   function cloneInstance(
     instance: Instance,
-    updatePayload: null | Object,
     type: string,
     oldProps: Props,
     newProps: Props,
-    internalInstanceHandle: Object,
     keepChildren: boolean,
-    recyclableInstance: null | Instance,
+    children: ?$ReadOnlyArray<Instance>,
   ): Instance {
     if (__DEV__) {
       checkPropStringCoercion(newProps.children, 'children');
@@ -237,7 +234,7 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
       id: instance.id,
       type: type,
       parent: instance.parent,
-      children: keepChildren ? instance.children : [],
+      children: keepChildren ? instance.children : children ?? [],
       text: shouldSetTextContent(type, newProps)
         ? computeText((newProps.children: any) + '', instance.context)
         : null,
@@ -275,7 +272,9 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
       throw new Error('Error in host config.');
     }
     return (
-      typeof props.children === 'string' || typeof props.children === 'number'
+      typeof props.children === 'string' ||
+      typeof props.children === 'number' ||
+      typeof props.children === 'bigint'
     );
   }
 
@@ -451,21 +450,6 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
       props: Props,
     ): boolean {
       return false;
-    },
-
-    prepareUpdate(
-      instance: Instance,
-      type: string,
-      oldProps: Props,
-      newProps: Props,
-    ): null | {...} {
-      if (oldProps === null) {
-        throw new Error('Should have old props');
-      }
-      if (newProps === null) {
-        throw new Error('Should have new props');
-      }
-      return UPDATE_SIGNAL;
     },
 
     shouldSetTextContent,
@@ -722,9 +706,7 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
         cloneInstance,
         clearContainer,
 
-        createContainerChildSet(
-          container: Container,
-        ): Array<Instance | TextInstance> {
+        createContainerChildSet(): Array<Instance | TextInstance> {
           return [];
         },
 
@@ -760,18 +742,8 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
           instance: Instance,
           type: string,
           props: Props,
-          internalInstanceHandle: Object,
         ): Instance {
-          const clone = cloneInstance(
-            instance,
-            null,
-            type,
-            props,
-            props,
-            internalInstanceHandle,
-            true,
-            null,
-          );
+          const clone = cloneInstance(instance, type, props, props, true, null);
           clone.hidden = true;
           return clone;
         },
@@ -779,7 +751,6 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
         cloneHiddenTextInstance(
           instance: TextInstance,
           text: string,
-          internalInstanceHandle: Object,
         ): TextInstance {
           const clone = {
             text: instance.text,
@@ -813,6 +784,34 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
 
   let currentEventPriority = DefaultEventPriority;
 
+  function createJSXElementForTestComparison(type, props) {
+    if (__DEV__ && enableRefAsProp) {
+      const element = {
+        type: type,
+        $$typeof: REACT_ELEMENT_TYPE,
+        key: null,
+        props: props,
+        _owner: null,
+        _store: __DEV__ ? {} : undefined,
+      };
+      Object.defineProperty(element, 'ref', {
+        enumerable: false,
+        value: null,
+      });
+      return element;
+    } else {
+      return {
+        $$typeof: REACT_ELEMENT_TYPE,
+        type: type,
+        key: null,
+        ref: null,
+        props: props,
+        _owner: null,
+        _store: __DEV__ ? {} : undefined,
+      };
+    }
+  }
+
   function childToJSX(child, text) {
     if (text !== null) {
       return text;
@@ -831,7 +830,14 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
         return childToJSX(child[0], null);
       }
       const children = child.map(c => childToJSX(c, null));
-      if (children.every(c => typeof c === 'string' || typeof c === 'number')) {
+      if (
+        children.every(
+          c =>
+            typeof c === 'string' ||
+            typeof c === 'number' ||
+            typeof c === 'bigint',
+        )
+      ) {
         return children.join('');
       }
       return children;
@@ -850,15 +856,7 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
       if (children !== null) {
         props.children = children;
       }
-      return {
-        $$typeof: REACT_ELEMENT_TYPE,
-        type: instance.type,
-        key: null,
-        ref: null,
-        props: props,
-        _owner: null,
-        _store: __DEV__ ? {} : undefined,
-      };
+      return createJSXElementForTestComparison(instance.type, props);
     }
     // This is a text instance
     const textInstance: TextInstance = (child: any);
@@ -890,15 +888,7 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
       return null;
     }
     if (isArray(children)) {
-      return {
-        $$typeof: REACT_ELEMENT_TYPE,
-        type: REACT_FRAGMENT_TYPE,
-        key: null,
-        ref: null,
-        props: {children},
-        _owner: null,
-        _store: __DEV__ ? {} : undefined,
-      };
+      return createJSXElementForTestComparison(REACT_FRAGMENT_TYPE, {children});
     }
     return children;
   }
@@ -909,15 +899,7 @@ function createReactNoop(reconciler: Function, useMutation: boolean) {
       return null;
     }
     if (isArray(children)) {
-      return {
-        $$typeof: REACT_ELEMENT_TYPE,
-        type: REACT_FRAGMENT_TYPE,
-        key: null,
-        ref: null,
-        props: {children},
-        _owner: null,
-        _store: __DEV__ ? {} : undefined,
-      };
+      return createJSXElementForTestComparison(REACT_FRAGMENT_TYPE, {children});
     }
     return children;
   }

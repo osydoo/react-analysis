@@ -523,7 +523,7 @@ describe('ReactDOMFloat', () => {
     }).toErrorDev(
       [
         'Cannot render <noscript> outside the main document. Try moving it into the root <head> tag.',
-        'Warning: validateDOMNesting(...): <noscript> cannot appear as a child of <#document>.',
+        'Warning: In HTML, <noscript> cannot be a child of <#document>.',
       ],
       {withoutStack: 1},
     );
@@ -538,7 +538,7 @@ describe('ReactDOMFloat', () => {
       await waitForAll([]);
     }).toErrorDev([
       'Cannot render <template> outside the main document. Try moving it into the root <head> tag.',
-      'Warning: validateDOMNesting(...): <template> cannot appear as a child of <html>.',
+      'Warning: In HTML, <template> cannot be a child of <html>.',
     ]);
 
     await expect(async () => {
@@ -551,7 +551,7 @@ describe('ReactDOMFloat', () => {
       await waitForAll([]);
     }).toErrorDev([
       'Cannot render a <style> outside the main document without knowing its precedence and a unique href key. React can hoist and deduplicate <style> tags if you provide a `precedence` prop along with an `href` prop that does not conflic with the `href` values used in any other hoisted <style> or <link rel="stylesheet" ...> tags.  Note that hoisting <style> tags is considered an advanced feature that most will not use directly. Consider moving the <style> tag to the <head> or consider adding a `precedence="default"` and `href="some unique resource identifier"`, or move the <style> to the <style> tag.',
-      'Warning: validateDOMNesting(...): <style> cannot appear as a child of <html>.',
+      'Warning: In HTML, <style> cannot be a child of <html>.',
     ]);
 
     await expect(async () => {
@@ -574,7 +574,7 @@ describe('ReactDOMFloat', () => {
     }).toErrorDev(
       [
         'Cannot render a <link rel="stylesheet" /> outside the main document without knowing its precedence. Consider adding precedence="default" or moving it into the root <head> tag.',
-        'Warning: validateDOMNesting(...): <link> cannot appear as a child of <#document>.',
+        'Warning: In HTML, <link> cannot be a child of <#document>.',
       ],
       {withoutStack: 1},
     );
@@ -591,7 +591,7 @@ describe('ReactDOMFloat', () => {
       await waitForAll([]);
     }).toErrorDev([
       'Cannot render a sync or defer <script> outside the main document without knowing its order. Try adding async="" or moving it into the root <head> tag.',
-      'Warning: validateDOMNesting(...): <script> cannot appear as a child of <html>.',
+      'Warning: In HTML, <script> cannot be a child of <html>.',
     ]);
 
     await expect(async () => {
@@ -667,60 +667,6 @@ describe('ReactDOMFloat', () => {
         <body>
           <div id="container" />
         </body>
-      </html>,
-    );
-  });
-
-  // @gate enableFloat
-  it('emits resources before everything else when rendering with no head', async () => {
-    function App() {
-      return (
-        <>
-          <title>foo</title>
-          <link rel="preload" href="foo" as="style" />
-        </>
-      );
-    }
-
-    await act(() => {
-      buffer = `<!DOCTYPE html><html><head>${ReactDOMFizzServer.renderToString(
-        <App />,
-      )}</head><body>foo</body></html>`;
-    });
-    expect(getMeaningfulChildren(document)).toEqual(
-      <html>
-        <head>
-          <link rel="preload" href="foo" as="style" />
-          <title>foo</title>
-        </head>
-        <body>foo</body>
-      </html>,
-    );
-  });
-
-  // @gate enableFloat
-  it('emits resources before everything else when rendering with just a head', async () => {
-    function App() {
-      return (
-        <head>
-          <title>foo</title>
-          <link rel="preload" href="foo" as="style" />
-        </head>
-      );
-    }
-
-    await act(() => {
-      buffer = `<!DOCTYPE html><html>${ReactDOMFizzServer.renderToString(
-        <App />,
-      )}<body>foo</body></html>`;
-    });
-    expect(getMeaningfulChildren(document)).toEqual(
-      <html>
-        <head>
-          <link rel="preload" href="foo" as="style" />
-          <title>foo</title>
-        </head>
-        <body>foo</body>
       </html>,
     );
   });
@@ -2248,7 +2194,7 @@ body {
         ' parent component, remove it from the DOM element.',
       'Invalid values for props `shouldnotincludefunctions`, `norsymbols` on <link> tag. Either remove them from' +
         ' the element, or pass a string or number value to keep them in the DOM. For' +
-        ' details, see https://reactjs.org/link/attribute-behavior',
+        ' details, see https://react.dev/link/attribute-behavior',
     ]);
 
     // Now we flush the stylesheet with the boundary
@@ -2606,11 +2552,11 @@ body {
       'Cannot render a <style> outside the main document if it has an `itemProp` prop. `itemProp` suggests the tag belongs to an `itemScope` which can appear anywhere in the DOM. If you were intending for React to hoist this <style> remove the `itemProp` prop. Otherwise, try moving this tag into the <head> or <body> of the Document.',
       'Cannot render a <link> outside the main document if it has an `itemProp` prop. `itemProp` suggests the tag belongs to an `itemScope` which can appear anywhere in the DOM. If you were intending for React to hoist this <link> remove the `itemProp` prop. Otherwise, try moving this tag into the <head> or <body> of the Document.',
       'Cannot render a <script> outside the main document if it has an `itemProp` prop. `itemProp` suggests the tag belongs to an `itemScope` which can appear anywhere in the DOM. If you were intending for React to hoist this <script> remove the `itemProp` prop. Otherwise, try moving this tag into the <head> or <body> of the Document.',
-      'validateDOMNesting(...): <meta> cannot appear as a child of <html>',
-      'validateDOMNesting(...): <title> cannot appear as a child of <html>',
-      'validateDOMNesting(...): <style> cannot appear as a child of <html>',
-      'validateDOMNesting(...): <link> cannot appear as a child of <html>',
-      'validateDOMNesting(...): <script> cannot appear as a child of <html>',
+      'In HTML, <meta> cannot be a child of <html>',
+      'In HTML, <title> cannot be a child of <html>',
+      'In HTML, <style> cannot be a child of <html>',
+      'In HTML, <link> cannot be a child of <html>',
+      'In HTML, <script> cannot be a child of <html>',
     ]);
   });
 
@@ -2850,6 +2796,84 @@ body {
       <link rel="stylesheet" href="foo" data-precedence="default" />,
       <link rel="preload" as="style" href="foo" />,
     ]);
+  });
+
+  // https://github.com/facebook/react/issues/27585
+  it('does not reinsert already inserted stylesheets during a delayed commit', async () => {
+    await act(() => {
+      renderToPipeableStream(
+        <html>
+          <body>
+            <link rel="stylesheet" href="first" precedence="default" />
+            <link rel="stylesheet" href="second" precedence="default" />
+            server
+          </body>
+        </html>,
+      ).pipe(writable);
+    });
+
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <link rel="stylesheet" href="first" data-precedence="default" />
+          <link rel="stylesheet" href="second" data-precedence="default" />
+        </head>
+        <body>server</body>
+      </html>,
+    );
+
+    const root = ReactDOMClient.createRoot(document.body);
+    expect(getMeaningfulChildren(container)).toBe(undefined);
+    root.render(
+      <>
+        <link rel="stylesheet" href="first" precedence="default" />
+        <link rel="stylesheet" href="third" precedence="default" />
+        <div>client</div>
+      </>,
+    );
+    await waitForAll([]);
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <link rel="stylesheet" href="first" data-precedence="default" />
+          <link rel="stylesheet" href="second" data-precedence="default" />
+          <link rel="stylesheet" href="third" data-precedence="default" />
+          <link rel="preload" href="third" as="style" />
+        </head>
+        <body>
+          <div>client</div>
+        </body>
+      </html>,
+    );
+
+    // In a transition we add another reference to an already loaded resource
+    // https://github.com/facebook/react/issues/27585
+    React.startTransition(() => {
+      root.render(
+        <>
+          <link rel="stylesheet" href="first" precedence="default" />
+          <link rel="stylesheet" href="third" precedence="default" />
+          <div>client</div>
+          <link rel="stylesheet" href="first" precedence="default" />
+        </>,
+      );
+    });
+    await waitForAll([]);
+    // In https://github.com/facebook/react/issues/27585 the order updated
+    // to second, third, first
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <link rel="stylesheet" href="first" data-precedence="default" />
+          <link rel="stylesheet" href="second" data-precedence="default" />
+          <link rel="stylesheet" href="third" data-precedence="default" />
+          <link rel="preload" href="third" as="style" />
+        </head>
+        <body>
+          <div>client</div>
+        </body>
+      </html>,
+    );
   });
 
   xit('can delay commit until css resources error', async () => {
@@ -4014,6 +4038,87 @@ body {
     );
   });
 
+  it('can promote images to high priority when at least one instance specifies a high fetchPriority', async () => {
+    function App() {
+      // If a ends up in a higher priority queue than b it will flush first
+      ReactDOM.preload('a', {as: 'image'});
+      ReactDOM.preload('b', {as: 'image'});
+      return (
+        <html>
+          <body>
+            <link rel="stylesheet" href="foo" precedence="default" />
+            <img src="1" />
+            <img src="2" />
+            <img src="3" />
+            <img src="4" />
+            <img src="5" />
+            <img src="6" />
+            <img src="7" />
+            <img src="8" />
+            <img src="9" />
+            <img src="10" />
+            <img src="11" />
+            <img src="12" />
+            <img src="a" fetchPriority="low" />
+            <img src="a" />
+            <img src="a" fetchPriority="high" />
+            <img src="a" />
+            <img src="a" />
+          </body>
+        </html>
+      );
+    }
+
+    await act(() => {
+      renderToPipeableStream(<App />).pipe(writable);
+    });
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          {/* The First 10 high priority images were just the first 10 rendered images */}
+          <link rel="preload" as="image" href="1" />
+          <link rel="preload" as="image" href="2" />
+          <link rel="preload" as="image" href="3" />
+          <link rel="preload" as="image" href="4" />
+          <link rel="preload" as="image" href="5" />
+          <link rel="preload" as="image" href="6" />
+          <link rel="preload" as="image" href="7" />
+          <link rel="preload" as="image" href="8" />
+          <link rel="preload" as="image" href="9" />
+          <link rel="preload" as="image" href="10" />
+          {/* The "a" image was rendered a few times but since at least one of those was with
+          fetchPriorty="high" it ends up in the high priority queue */}
+          <link rel="preload" as="image" href="a" />
+          {/* Stylesheets come in between high priority images and regular preloads */}
+          <link rel="stylesheet" href="foo" data-precedence="default" />
+          {/* The remainig images that preloaded at regular priority */}
+          <link rel="preload" as="image" href="b" />
+          <link rel="preload" as="image" href="11" />
+          <link rel="preload" as="image" href="12" />
+        </head>
+        <body>
+          <img src="1" />
+          <img src="2" />
+          <img src="3" />
+          <img src="4" />
+          <img src="5" />
+          <img src="6" />
+          <img src="7" />
+          <img src="8" />
+          <img src="9" />
+          <img src="10" />
+          <img src="11" />
+          <img src="12" />
+          <img src="a" fetchpriority="low" />
+          <img src="a" />
+          <img src="a" fetchpriority="high" />
+          <img src="a" />
+          <img src="a" />
+        </body>
+      </html>,
+    );
+  });
+
   it('preloads from rendered images properly use srcSet and sizes', async () => {
     function App() {
       ReactDOM.preload('1', {as: 'image', imageSrcSet: 'ss1'});
@@ -4085,6 +4190,696 @@ body {
     );
   });
 
+  // https://github.com/vercel/next.js/discussions/54799
+  it('omits preloads when an <img> is inside a <picture>', async () => {
+    await act(() => {
+      renderToPipeableStream(
+        <html>
+          <body>
+            <picture>
+              <img src="foo" />
+            </picture>
+            <picture>
+              <source type="image/webp" srcSet="webpsrc" />
+              <img src="jpg fallback" />
+            </picture>
+          </body>
+        </html>,
+      ).pipe(writable);
+    });
+
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head />
+        <body>
+          <picture>
+            <img src="foo" />
+          </picture>
+          <picture>
+            <source type="image/webp" srcset="webpsrc" />
+            <img src="jpg fallback" />
+          </picture>
+        </body>
+      </html>,
+    );
+  });
+
+  it('should warn if you preload a stylesheet and then render a style tag with the same href', async () => {
+    const style = 'body { color: red; }';
+    function App() {
+      ReactDOM.preload('foo', {as: 'style'});
+      return (
+        <html>
+          <body>
+            hello
+            <style precedence="default" href="foo">
+              {style}
+            </style>
+          </body>
+        </html>
+      );
+    }
+
+    await expect(async () => {
+      await act(() => {
+        renderToPipeableStream(<App />).pipe(writable);
+      });
+    }).toErrorDev([
+      'React encountered a hoistable style tag for the same href as a preload: "foo". When using a style tag to inline styles you should not also preload it as a stylsheet.',
+    ]);
+
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <style data-precedence="default" data-href="foo">
+            {style}
+          </style>
+          <link rel="preload" as="style" href="foo" />
+        </head>
+        <body>hello</body>
+      </html>,
+    );
+  });
+
+  it('should preload only once even if you discover a stylesheet, script, or moduleScript late', async () => {
+    function App() {
+      // We start with preinitializing some resources first
+      ReactDOM.preinit('shell preinit/shell', {as: 'style'});
+      ReactDOM.preinit('shell preinit/shell', {as: 'script'});
+      ReactDOM.preinitModule('shell preinit/shell', {as: 'script'});
+
+      // We initiate all the shell preloads
+      ReactDOM.preload('shell preinit/shell', {as: 'style'});
+      ReactDOM.preload('shell preinit/shell', {as: 'script'});
+      ReactDOM.preloadModule('shell preinit/shell', {as: 'script'});
+
+      ReactDOM.preload('shell/shell preinit', {as: 'style'});
+      ReactDOM.preload('shell/shell preinit', {as: 'script'});
+      ReactDOM.preloadModule('shell/shell preinit', {as: 'script'});
+
+      ReactDOM.preload('shell/shell render', {as: 'style'});
+      ReactDOM.preload('shell/shell render', {as: 'script'});
+      ReactDOM.preloadModule('shell/shell render');
+
+      ReactDOM.preload('shell/late preinit', {as: 'style'});
+      ReactDOM.preload('shell/late preinit', {as: 'script'});
+      ReactDOM.preloadModule('shell/late preinit');
+
+      ReactDOM.preload('shell/late render', {as: 'style'});
+      ReactDOM.preload('shell/late render', {as: 'script'});
+      ReactDOM.preloadModule('shell/late render');
+
+      // we preinit later ones that should be created by
+      ReactDOM.preinit('shell/shell preinit', {as: 'style'});
+      ReactDOM.preinit('shell/shell preinit', {as: 'script'});
+      ReactDOM.preinitModule('shell/shell preinit');
+
+      ReactDOM.preinit('late/shell preinit', {as: 'style'});
+      ReactDOM.preinit('late/shell preinit', {as: 'script'});
+      ReactDOM.preinitModule('late/shell preinit');
+      return (
+        <html>
+          <body>
+            <link
+              rel="stylesheet"
+              precedence="default"
+              href="shell/shell render"
+            />
+            <script async={true} src="shell/shell render" />
+            <script type="module" async={true} src="shell/shell render" />
+            <link
+              rel="stylesheet"
+              precedence="default"
+              href="late/shell render"
+            />
+            <script async={true} src="late/shell render" />
+            <script type="module" async={true} src="late/shell render" />
+            <Suspense fallback="late...">
+              <BlockedOn value="late">
+                <Late />
+              </BlockedOn>
+            </Suspense>
+            <Suspense fallback="later...">
+              <BlockedOn value="later">
+                <Later />
+              </BlockedOn>
+            </Suspense>
+          </body>
+        </html>
+      );
+    }
+
+    function Late() {
+      ReactDOM.preload('late/later preinit', {as: 'style'});
+      ReactDOM.preload('late/later preinit', {as: 'script'});
+      ReactDOM.preloadModule('late/later preinit');
+
+      ReactDOM.preload('late/later render', {as: 'style'});
+      ReactDOM.preload('late/later render', {as: 'script'});
+      ReactDOM.preloadModule('late/later render');
+
+      ReactDOM.preload('late/shell preinit', {as: 'style'});
+      ReactDOM.preload('late/shell preinit', {as: 'script'});
+      ReactDOM.preloadModule('late/shell preinit');
+
+      ReactDOM.preload('late/shell render', {as: 'style'});
+      ReactDOM.preload('late/shell render', {as: 'script'});
+      ReactDOM.preloadModule('late/shell render');
+
+      // late preinits don't actually flush so we won't see this in the DOM as a stylesehet but we should see
+      // the preload for this resource
+      ReactDOM.preinit('shell/late preinit', {as: 'style'});
+      ReactDOM.preinit('shell/late preinit', {as: 'script'});
+      ReactDOM.preinitModule('shell/late preinit');
+      return (
+        <>
+          Late
+          <link
+            rel="stylesheet"
+            precedence="default"
+            href="shell/late render"
+          />
+          <script async={true} src="shell/late render" />
+          <script type="module" async={true} src="shell/late render" />
+        </>
+      );
+    }
+
+    function Later() {
+      // late preinits don't actually flush so we won't see this in the DOM as a stylesehet but we should see
+      // the preload for this resource
+      ReactDOM.preinit('late/later preinit', {as: 'style'});
+      ReactDOM.preinit('late/later preinit', {as: 'script'});
+      ReactDOM.preinitModule('late/later preinit');
+      return (
+        <>
+          Later
+          <link
+            rel="stylesheet"
+            precedence="default"
+            href="late/later render"
+          />
+          <script async={true} src="late/later render" />
+          <script type="module" async={true} src="late/later render" />
+        </>
+      );
+    }
+
+    await act(() => {
+      renderToPipeableStream(<App />).pipe(writable);
+    });
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell preinit/shell"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/shell preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/shell preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/shell render"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/shell render"
+          />
+          <script async="" src="shell preinit/shell" />
+          <script async="" src="shell preinit/shell" type="module" />
+          <script async="" src="shell/shell preinit" />
+          <script async="" src="shell/shell preinit" type="module" />
+          <script async="" src="late/shell preinit" />
+          <script async="" src="late/shell preinit" type="module" />
+          <script async="" src="shell/shell render" />
+          <script async="" src="shell/shell render" type="module" />
+          <script async="" src="late/shell render" />
+          <script async="" src="late/shell render" type="module" />
+          <link rel="preload" as="style" href="shell/late preinit" />
+          <link rel="preload" as="script" href="shell/late preinit" />
+          <link rel="modulepreload" href="shell/late preinit" />
+          <link rel="preload" as="style" href="shell/late render" />
+          <link rel="preload" as="script" href="shell/late render" />
+          <link rel="modulepreload" href="shell/late render" />
+        </head>
+        <body>
+          {'late...'}
+          {'later...'}
+        </body>
+      </html>,
+    );
+
+    await act(() => {
+      resolveText('late');
+    });
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell preinit/shell"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/shell preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/shell preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/shell render"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/shell render"
+          />
+          {/* FROM HERE */}
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/late render"
+          />
+          {/** TO HERE:
+           * This was hoisted by boundary complete instruction. The preload was already emitted in the
+           * shell but we see it below because this was inserted clientside by precedence.
+           * We don't observe the "shell/late preinit" because these do not flush unless they are flushing
+           * with the shell
+           * */}
+          <script async="" src="shell preinit/shell" />
+          <script async="" src="shell preinit/shell" type="module" />
+          <script async="" src="shell/shell preinit" />
+          <script async="" src="shell/shell preinit" type="module" />
+          <script async="" src="late/shell preinit" />
+          <script async="" src="late/shell preinit" type="module" />
+          <script async="" src="shell/shell render" />
+          <script async="" src="shell/shell render" type="module" />
+          <script async="" src="late/shell render" />
+          <script async="" src="late/shell render" type="module" />
+          <link rel="preload" as="style" href="shell/late preinit" />
+          <link rel="preload" as="script" href="shell/late preinit" />
+          <link rel="modulepreload" href="shell/late preinit" />
+          <link rel="preload" as="style" href="shell/late render" />
+          <link rel="preload" as="script" href="shell/late render" />
+          <link rel="modulepreload" href="shell/late render" />
+        </head>
+        <body>
+          {'late...'}
+          {'later...'}
+          {/* FROM HERE */}
+          <script async="" src="shell/late preinit" />
+          <script async="" src="shell/late preinit" type="module" />
+          <script async="" src="shell/late render" />
+          <script async="" src="shell/late render" type="module" />
+          <link rel="preload" as="style" href="late/later preinit" />
+          <link rel="preload" as="script" href="late/later preinit" />
+          <link rel="modulepreload" href="late/later preinit" />
+          <link rel="preload" as="style" href="late/later render" />
+          <link rel="preload" as="script" href="late/later render" />
+          <link rel="modulepreload" href="late/later render" />
+          {/** TO HERE:
+           * These resources streamed into the body during the boundary flush. Scripts go first then
+           * preloads according to our streaming queue priorities. Note also that late/shell resources
+           * where the resource already emitted in the shell and the preload is invoked later do not
+           * end up with a preload in the document at all.
+           * */}
+        </body>
+      </html>,
+    );
+
+    await act(() => {
+      resolveText('later');
+    });
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell preinit/shell"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/shell preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/shell preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/shell render"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/shell render"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/late render"
+          />
+          {/* FROM HERE */}
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/later render"
+          />
+          {/** TO HERE:
+           * This was hoisted by boundary complete instruction. The preload was already emitted in the
+           * shell but we see it below because this was inserted clientside by precedence
+           * We don't observe the "late/later preinit" because these do not flush unless they are flushing
+           * with the shell
+           * */}
+          <script async="" src="shell preinit/shell" />
+          <script async="" src="shell preinit/shell" type="module" />
+          <script async="" src="shell/shell preinit" />
+          <script async="" src="shell/shell preinit" type="module" />
+          <script async="" src="late/shell preinit" />
+          <script async="" src="late/shell preinit" type="module" />
+          <script async="" src="shell/shell render" />
+          <script async="" src="shell/shell render" type="module" />
+          <script async="" src="late/shell render" />
+          <script async="" src="late/shell render" type="module" />
+          <link rel="preload" as="style" href="shell/late preinit" />
+          <link rel="preload" as="script" href="shell/late preinit" />
+          <link rel="modulepreload" href="shell/late preinit" />
+          <link rel="preload" as="style" href="shell/late render" />
+          <link rel="preload" as="script" href="shell/late render" />
+          <link rel="modulepreload" href="shell/late render" />
+        </head>
+        <body>
+          {'late...'}
+          {'later...'}
+          <script async="" src="shell/late preinit" />
+          <script async="" src="shell/late preinit" type="module" />
+          <script async="" src="shell/late render" />
+          <script async="" src="shell/late render" type="module" />
+          <link rel="preload" as="style" href="late/later preinit" />
+          <link rel="preload" as="script" href="late/later preinit" />
+          <link rel="modulepreload" href="late/later preinit" />
+          <link rel="preload" as="style" href="late/later render" />
+          <link rel="preload" as="script" href="late/later render" />
+          <link rel="modulepreload" href="late/later render" />
+          {/* FROM HERE */}
+          <script async="" src="late/later preinit" />
+          <script async="" src="late/later preinit" type="module" />
+          <script async="" src="late/later render" />
+          <script async="" src="late/later render" type="module" />
+          {/** TO HERE:
+           * These resources streamed into the body during the boundary flush. Scripts go first then
+           * preloads according to our streaming queue priorities
+           * */}
+        </body>
+      </html>,
+    );
+    loadStylesheets();
+    assertLog([
+      'load stylesheet: shell preinit/shell',
+      'load stylesheet: shell/shell preinit',
+      'load stylesheet: late/shell preinit',
+      'load stylesheet: shell/shell render',
+      'load stylesheet: late/shell render',
+      'load stylesheet: shell/late render',
+      'load stylesheet: late/later render',
+    ]);
+
+    ReactDOMClient.hydrateRoot(document, <App />);
+    await waitForAll([]);
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell preinit/shell"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/shell preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/shell preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/shell render"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/shell render"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/late render"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/later render"
+          />
+          {/* FROM HERE */}
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="shell/late preinit"
+          />
+          <link
+            rel="stylesheet"
+            data-precedence="default"
+            href="late/later preinit"
+          />
+          {/** TO HERE:
+           * The client render patches in the two missing preinit stylesheets when hydration happens
+           * Note that this is only because we repeated the calls to preinit on the client
+           * */}
+          <script async="" src="shell preinit/shell" />
+          <script async="" src="shell preinit/shell" type="module" />
+          <script async="" src="shell/shell preinit" />
+          <script async="" src="shell/shell preinit" type="module" />
+          <script async="" src="late/shell preinit" />
+          <script async="" src="late/shell preinit" type="module" />
+          <script async="" src="shell/shell render" />
+          <script async="" src="shell/shell render" type="module" />
+          <script async="" src="late/shell render" />
+          <script async="" src="late/shell render" type="module" />
+          <link rel="preload" as="style" href="shell/late preinit" />
+          <link rel="preload" as="script" href="shell/late preinit" />
+          <link rel="modulepreload" href="shell/late preinit" />
+          <link rel="preload" as="style" href="shell/late render" />
+          <link rel="preload" as="script" href="shell/late render" />
+          <link rel="modulepreload" href="shell/late render" />
+        </head>
+        <body>
+          {'Late'}
+          {'Later'}
+          <script async="" src="shell/late preinit" />
+          <script async="" src="shell/late preinit" type="module" />
+          <script async="" src="shell/late render" />
+          <script async="" src="shell/late render" type="module" />
+          <link rel="preload" as="style" href="late/later preinit" />
+          <link rel="preload" as="script" href="late/later preinit" />
+          <link rel="modulepreload" href="late/later preinit" />
+          <link rel="preload" as="style" href="late/later render" />
+          <link rel="preload" as="script" href="late/later render" />
+          <link rel="modulepreload" href="late/later render" />
+          <script async="" src="late/later preinit" />
+          <script async="" src="late/later preinit" type="module" />
+          <script async="" src="late/later render" />
+          <script async="" src="late/later render" type="module" />
+        </body>
+      </html>,
+    );
+  });
+
+  it('does not flush hoistables for fallbacks', async () => {
+    function App() {
+      return (
+        <html>
+          <body>
+            <Suspense
+              fallback={
+                <>
+                  <div>fallback1</div>
+                  <meta name="fallback1" />
+                  <title>foo</title>
+                </>
+              }>
+              <>
+                <div>primary1</div>
+                <meta name="primary1" />
+              </>
+            </Suspense>
+            <Suspense
+              fallback={
+                <>
+                  <div>fallback2</div>
+                  <meta name="fallback2" />
+                  <link rel="foo" href="bar" />
+                </>
+              }>
+              <>
+                <div>primary2</div>
+                <BlockedOn value="first">
+                  <meta name="primary2" />
+                </BlockedOn>
+              </>
+            </Suspense>
+            <Suspense
+              fallback={
+                <>
+                  <div>fallback3</div>
+                  <meta name="fallback3" />
+                  <Suspense fallback="deep">
+                    <div>deep fallback ... primary content</div>
+                    <meta name="deep fallback" />
+                  </Suspense>
+                </>
+              }>
+              <>
+                <div>primary3</div>
+                <BlockedOn value="second">
+                  <meta name="primary3" />
+                </BlockedOn>
+              </>
+            </Suspense>
+          </body>
+        </html>
+      );
+    }
+
+    await act(() => {
+      renderToPipeableStream(<App />).pipe(writable);
+      resolveText('first');
+    });
+
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <meta name="primary1" />
+          <meta name="primary2" />
+        </head>
+        <body>
+          <div>primary1</div>
+          <div>primary2</div>
+          <div>fallback3</div>
+          <div>deep fallback ... primary content</div>
+        </body>
+      </html>,
+    );
+
+    await act(() => {
+      resolveText('second');
+    });
+
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <meta name="primary1" />
+          <meta name="primary2" />
+        </head>
+        <body>
+          <div>primary1</div>
+          <div>primary2</div>
+          <div>primary3</div>
+          <meta name="primary3" />
+        </body>
+      </html>,
+    );
+  });
+
+  it('avoids flushing hoistables from completed boundaries nested inside fallbacks', async () => {
+    function App() {
+      return (
+        <html>
+          <body>
+            <Suspense
+              fallback={
+                <Suspense
+                  fallback={
+                    <>
+                      <div>nested fallback1</div>
+                      <meta name="nested fallback1" />
+                    </>
+                  }>
+                  <>
+                    <div>nested primary1</div>
+                    <meta name="nested primary1" />
+                  </>
+                </Suspense>
+              }>
+              <BlockedOn value="release" />
+              <>
+                <div>primary1</div>
+                <meta name="primary1" />
+              </>
+            </Suspense>
+          </body>
+        </html>
+      );
+    }
+
+    await act(() => {
+      renderToPipeableStream(<App />).pipe(writable);
+    });
+
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          {/* The primary content hoistables emit */}
+          <meta name="primary1" />
+        </head>
+        <body>
+          {/* The fallback content emits but the hoistables do not even if they
+              inside a nested suspense boundary that is resolved */}
+          <div>nested primary1</div>
+        </body>
+      </html>,
+    );
+
+    await act(() => {
+      resolveText('release');
+    });
+
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <meta name="primary1" />
+        </head>
+        <body>
+          <div>primary1</div>
+        </body>
+      </html>,
+    );
+  });
+
   describe('ReactDOM.prefetchDNS(href)', () => {
     it('creates a dns-prefetch resource when called', async () => {
       function App({url}) {
@@ -4150,6 +4945,120 @@ body {
         </html>,
       );
     });
+  });
+
+  it('does not wait for stylesheets of completed fallbacks', async () => {
+    function Unblock({value}) {
+      resolveText(value);
+      return null;
+    }
+    function App() {
+      return (
+        <html>
+          <body>
+            <Suspense fallback="loading...">
+              <div>hello world</div>
+              <BlockedOn value="unblock inner boundaries">
+                <Suspense
+                  fallback={
+                    <>
+                      <link
+                        rel="stylesheet"
+                        href="completed inner"
+                        precedence="default"
+                      />
+                      <div>inner fallback</div>
+                      <Unblock value="completed inner" />
+                    </>
+                  }>
+                  <BlockedOn value="completed inner" />
+                  <div>inner boundary</div>
+                </Suspense>
+                <Suspense
+                  fallback={
+                    <>
+                      <link
+                        rel="stylesheet"
+                        href="in fallback inner"
+                        precedence="default"
+                      />
+                      <div>inner blocked fallback</div>
+                    </>
+                  }>
+                  <BlockedOn value="in fallback inner" />
+                  <div>inner blocked boundary</div>
+                </Suspense>
+              </BlockedOn>
+              <BlockedOn value="complete root" />
+            </Suspense>
+          </body>
+        </html>
+      );
+    }
+
+    await act(() => {
+      renderToPipeableStream(<App />).pipe(writable);
+    });
+
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head />
+        <body>loading...</body>
+      </html>,
+    );
+
+    await act(async () => {
+      resolveText('unblock inner boundaries');
+    });
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head />
+        <body>
+          loading...
+          <link rel="preload" href="completed inner" as="style" />
+          <link rel="preload" href="in fallback inner" as="style" />
+        </body>
+      </html>,
+    );
+
+    await act(() => {
+      resolveText('completed inner');
+    });
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head />
+        <body>
+          loading...
+          <link rel="preload" href="completed inner" as="style" />
+          <link rel="preload" href="in fallback inner" as="style" />
+        </body>
+      </html>,
+    );
+
+    await act(() => {
+      resolveText('complete root');
+    });
+    await act(() => {
+      loadStylesheets();
+    });
+    expect(getMeaningfulChildren(document)).toEqual(
+      <html>
+        <head>
+          <link
+            rel="stylesheet"
+            href="in fallback inner"
+            data-precedence="default"
+          />
+        </head>
+        <body>
+          <div>hello world</div>
+          <div>inner boundary</div>
+          <div>inner blocked fallback</div>
+          <link rel="preload" href="completed inner" as="style" />
+          <link rel="preload" href="in fallback inner" as="style" />
+        </body>
+      </html>,
+    );
   });
 
   describe('ReactDOM.preconnect(href, { crossOrigin })', () => {
@@ -5307,8 +6216,6 @@ body {
       ]);
       expect(getMeaningfulChildren(document.body)).toEqual(
         <div id="container">
-          <script type="module" src="1" async="" />
-          <script type="module" src="2" async="" />
           <div>hello</div>
         </div>,
       );
@@ -5516,7 +6423,7 @@ body {
       );
     });
 
-    // @gate enableFloat && enableHostSingletons && enableClientRenderFallbackOnTextMismatch
+    // @gate enableFloat && enableClientRenderFallbackOnTextMismatch
     it('retains styles even when a new html, head, and/body mount', async () => {
       await act(() => {
         const {pipe} = renderToPipeableStream(
@@ -5568,58 +6475,7 @@ body {
       );
     });
 
-    // @gate enableFloat && !enableHostSingletons
-    it('retains styles even when a new html, head, and/body mount - without HostSingleton', async () => {
-      await act(() => {
-        const {pipe} = renderToPipeableStream(
-          <html>
-            <head />
-            <body>
-              <link rel="stylesheet" href="foo" precedence="foo" />
-              <link rel="stylesheet" href="bar" precedence="bar" />
-              server
-            </body>
-          </html>,
-        );
-        pipe(writable);
-      });
-      const errors = [];
-      ReactDOMClient.hydrateRoot(
-        document,
-        <html>
-          <head>
-            <link rel="stylesheet" href="qux" precedence="qux" />
-            <link rel="stylesheet" href="foo" precedence="foo" />
-          </head>
-          <body>client</body>
-        </html>,
-        {
-          onRecoverableError(error) {
-            errors.push(error.message);
-          },
-        },
-      );
-      await expect(async () => {
-        await waitForAll([]);
-      }).toErrorDev(
-        [
-          'Warning: Text content did not match. Server: "server" Client: "client"',
-          'Warning: An error occurred during hydration. The server HTML was replaced with client content in <#document>.',
-        ],
-        {withoutStack: 1},
-      );
-      expect(getMeaningfulChildren(document)).toEqual(
-        <html>
-          <head>
-            <link rel="stylesheet" href="qux" data-precedence="qux" />
-            <link rel="stylesheet" href="foo" data-precedence="foo" />
-          </head>
-          <body>client</body>
-        </html>,
-      );
-    });
-
-    // @gate enableFloat && enableHostSingletons
+    // @gate enableFloat
     it('retains styles in head through head remounts', async () => {
       const root = ReactDOMClient.createRoot(document);
       root.render(
@@ -7111,6 +7967,7 @@ background-color: green;
               <link rel="preload" href="foo" as="style" />
               <link rel="preconnect" href="bar" />
               <link rel="dns-prefetch" href="baz" />
+              <meta name="viewport" />
               <meta charSet="utf-8" />
             </body>
           </html>,
@@ -7123,68 +7980,17 @@ background-color: green;
           <head>
             {/* charset first */}
             <meta charset="utf-8" />
-            {/* preconnect links next */}
-            <link rel="preconnect" href="bar" />
-            <link rel="dns-prefetch" href="baz" />
-            {/* preloads next */}
-            <link rel="preload" href="foo" as="style" />
+            {/* viewport meta next */}
+            <meta name="viewport" />
             {/* Everything else last */}
             <link rel="foo" href="foo" />
             <meta name="bar" />
             <title>a title</title>
+            <link rel="preload" href="foo" as="style" />
+            <link rel="preconnect" href="bar" />
+            <link rel="dns-prefetch" href="baz" />
           </head>
           <body />
-        </html>,
-      );
-    });
-
-    // @gate enableFloat
-    it('emits hoistables before other content when streaming in late', async () => {
-      let content = '';
-      writable.on('data', chunk => (content += chunk));
-
-      await act(() => {
-        const {pipe} = renderToPipeableStream(
-          <html>
-            <body>
-              <meta name="early" />
-              <Suspense fallback={null}>
-                <BlockedOn value="foo">
-                  <div>foo</div>
-                  <meta name="late" />
-                </BlockedOn>
-              </Suspense>
-            </body>
-          </html>,
-        );
-        pipe(writable);
-      });
-
-      expect(getMeaningfulChildren(document)).toEqual(
-        <html>
-          <head>
-            <meta name="early" />
-          </head>
-          <body />
-        </html>,
-      );
-      content = '';
-
-      await act(() => {
-        resolveText('foo');
-      });
-
-      expect(content.slice(0, 30)).toEqual('<meta name="late"/><div hidden');
-
-      expect(getMeaningfulChildren(document)).toEqual(
-        <html>
-          <head>
-            <meta name="early" />
-          </head>
-          <body>
-            <div>foo</div>
-            <meta name="late" />
-          </body>
         </html>,
       );
     });
@@ -7428,7 +8234,7 @@ background-color: green;
       ]);
     });
 
-    // @gate enableFloat && enableHostSingletons && (enableClientRenderFallbackOnTextMismatch || !__DEV__)
+    // @gate enableFloat && (enableClientRenderFallbackOnTextMismatch || !__DEV__)
     it('can render a title before a singleton even if that singleton clears its contents', async () => {
       await act(() => {
         const {pipe} = renderToPipeableStream(

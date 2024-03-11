@@ -7,7 +7,6 @@
  * @flow
  */
 
-import type {HostDispatcher} from 'react-dom/src/shared/ReactDOMTypes';
 import type {EventPriority} from 'react-reconciler/src/ReactEventPriorities';
 import type {DOMEventName} from '../events/DOMEventNames';
 import type {Fiber, FiberRoot} from 'react-reconciler/src/ReactInternalTypes';
@@ -20,12 +19,12 @@ import type {ReactScopeInstance} from 'shared/ReactTypes';
 import type {AncestorInfoDev} from './validateDOMNesting';
 import type {FormStatus} from 'react-dom-bindings/src/shared/ReactDOMFormActions';
 import type {
-  PrefetchDNSOptions,
-  PreconnectOptions,
-  PreloadOptions,
-  PreloadModuleOptions,
-  PreinitOptions,
-  PreinitModuleOptions,
+  CrossOriginEnum,
+  PreloadImplOptions,
+  PreloadModuleImplOptions,
+  PreinitStyleOptions,
+  PreinitScriptOptions,
+  PreinitModuleScriptOptions,
 } from 'react-dom/src/shared/ReactDOMTypes';
 
 import {NotPending} from 'react-dom-bindings/src/shared/ReactDOMFormActions';
@@ -54,9 +53,7 @@ export {detachDeletedInstance};
 import {hasRole} from './DOMAccessibilityRoles';
 import {
   setInitialProperties,
-  diffProperties,
   updateProperties,
-  updatePropertiesWithDiff,
   diffHydratedProperties,
   diffHydratedText,
   trapClickOnNonInteractiveElement,
@@ -91,13 +88,13 @@ import {
 import {retryIfBlockedOn} from '../events/ReactDOMEventReplaying';
 
 import {
+  enableBigIntSupport,
   enableCreateEventHandleAPI,
   enableScopeAPI,
   enableFloat,
-  enableHostSingletons,
   enableTrustedTypesIntegration,
-  diffInCommitPhase,
   enableFormActions,
+  enableAsyncActions,
 } from 'shared/ReactFeatureFlags';
 import {
   HostComponent,
@@ -106,13 +103,12 @@ import {
   HostSingleton,
 } from 'react-reconciler/src/ReactWorkTags';
 import {listenToAllSupportedEvents} from '../events/DOMPluginEventSystem';
-import {
-  validatePreinitArguments,
-  validateLinkPropsForStyleResource,
-  getValueDescriptorExpectingObjectForWarning,
-  getValueDescriptorExpectingEnumForWarning,
-} from '../shared/ReactDOMResourceValidation';
+import {validateLinkPropsForStyleResource} from '../shared/ReactDOMResourceValidation';
 import escapeSelectorAttributeValueInsideDoubleQuotes from './escapeSelectorAttributeValueInsideDoubleQuotes';
+
+import ReactDOMSharedInternals from 'shared/ReactDOMSharedInternals';
+const ReactDOMCurrentDispatcher =
+  ReactDOMSharedInternals.ReactDOMCurrentDispatcher;
 
 export type Type = string;
 export type Props = {
@@ -160,7 +156,12 @@ export type TextInstance = Text;
 export interface SuspenseInstance extends Comment {
   _reactRetry?: () => void;
 }
-export type HydratableInstance = Instance | TextInstance | SuspenseInstance;
+type FormStateMarkerInstance = Comment;
+export type HydratableInstance =
+  | Instance
+  | TextInstance
+  | SuspenseInstance
+  | FormStateMarkerInstance;
 export type PublicInstance = Element | Text;
 export type HostContextDev = {
   context: HostContextProd,
@@ -187,6 +188,8 @@ const SUSPENSE_START_DATA = '$';
 const SUSPENSE_END_DATA = '/$';
 const SUSPENSE_PENDING_START_DATA = '$?';
 const SUSPENSE_FALLBACK_START_DATA = '$!';
+const FORM_STATE_IS_MATCHING = 'F!';
+const FORM_STATE_IS_NOT_MATCHING = 'F';
 
 const STYLE = 'style';
 
@@ -543,26 +546,13 @@ export function finalizeInitialChildren(
   }
 }
 
-export function prepareUpdate(
-  domElement: Instance,
-  type: string,
-  oldProps: Props,
-  newProps: Props,
-  hostContext: HostContext,
-): null | Array<mixed> {
-  if (diffInCommitPhase) {
-    // TODO: Figure out how to validateDOMNesting when children turn into a string.
-    return null;
-  }
-  return diffProperties(domElement, type, oldProps, newProps);
-}
-
 export function shouldSetTextContent(type: string, props: Props): boolean {
   return (
     type === 'textarea' ||
     type === 'noscript' ||
     typeof props.children === 'string' ||
     typeof props.children === 'number' ||
+    (enableBigIntSupport && typeof props.children === 'bigint') ||
     (typeof props.dangerouslySetInnerHTML === 'object' &&
       props.dangerouslySetInnerHTML !== null &&
       props.dangerouslySetInnerHTML.__html != null)
@@ -597,8 +587,29 @@ export function getCurrentEventPriority(): EventPriority {
   return getEventPriority(currentEvent.type);
 }
 
+let currentPopstateTransitionEvent: Event | null = null;
 export function shouldAttemptEagerTransition(): boolean {
-  return window.event && window.event.type === 'popstate';
+  const event = window.event;
+  if (event && event.type === 'popstate') {
+    // This is a popstate event. Attempt to render any transition during this
+    // event synchronously. Unless we already attempted during this event.
+    if (event === currentPopstateTransitionEvent) {
+      // We already attempted to render this popstate transition synchronously.
+      // Any subsequent attempts must have happened as the result of a derived
+      // update, like startTransition inside useEffect, or useDV. Switch back to
+      // the default behavior for all remaining transitions during the current
+      // popstate event.
+      return false;
+    } else {
+      // Cache the current event in case a derived transition is scheduled.
+      // (Refer to previous branch.)
+      currentPopstateTransitionEvent = event;
+      return true;
+    }
+  }
+  // We're not inside a popstate event.
+  currentPopstateTransitionEvent = null;
+  return false;
 }
 
 export const isPrimaryRenderer = true;
@@ -709,19 +720,8 @@ export function commitUpdate(
   newProps: Props,
   internalInstanceHandle: Object,
 ): void {
-  if (diffInCommitPhase) {
-    // Diff and update the properties.
-    updateProperties(domElement, type, oldProps, newProps);
-  } else {
-    // Apply the diff to the DOM node.
-    updatePropertiesWithDiff(
-      domElement,
-      updatePayload,
-      type,
-      oldProps,
-      newProps,
-    );
-  }
+  // Diff and update the properties.
+  updateProperties(domElement, type, oldProps, newProps);
 
   // Update the props handle so that we know which props are the ones with
   // with current event handlers.
@@ -943,32 +943,18 @@ export function unhideTextInstance(
 }
 
 export function clearContainer(container: Container): void {
-  if (enableHostSingletons) {
-    const nodeType = container.nodeType;
-    if (nodeType === DOCUMENT_NODE) {
-      clearContainerSparingly(container);
-    } else if (nodeType === ELEMENT_NODE) {
-      switch (container.nodeName) {
-        case 'HEAD':
-        case 'HTML':
-        case 'BODY':
-          clearContainerSparingly(container);
-          return;
-        default: {
-          container.textContent = '';
-        }
-      }
-    }
-  } else {
-    if (container.nodeType === ELEMENT_NODE) {
-      // We have refined the container to Element type
-      const element: Element = (container: any);
-      element.textContent = '';
-    } else if (container.nodeType === DOCUMENT_NODE) {
-      // We have refined the container to Document type
-      const doc: Document = (container: any);
-      if (doc.documentElement) {
-        doc.removeChild(doc.documentElement);
+  const nodeType = container.nodeType;
+  if (nodeType === DOCUMENT_NODE) {
+    clearContainerSparingly(container);
+  } else if (nodeType === ELEMENT_NODE) {
+    switch (container.nodeName) {
+      case 'HEAD':
+      case 'HTML':
+      case 'BODY':
+        clearContainerSparingly(container);
+        return;
+      default: {
+        container.textContent = '';
       }
     }
   }
@@ -1043,10 +1029,6 @@ export function bindInstance(
 
 export const supportsHydration = true;
 
-export function isHydratableText(text: string): boolean {
-  return text !== '';
-}
-
 export function canHydrateInstance(
   instance: HydratableInstance,
   type: string,
@@ -1057,7 +1039,7 @@ export function canHydrateInstance(
     const element: Element = (instance: any);
     const anyProps = (props: any);
     if (element.nodeName.toLowerCase() !== type.toLowerCase()) {
-      if (!inRootOrSingleton || !enableHostSingletons) {
+      if (!inRootOrSingleton) {
         // Usually we error for mismatched tags.
         if (
           enableFormActions &&
@@ -1071,7 +1053,7 @@ export function canHydrateInstance(
         }
       }
       // In root or singleton parents we skip past mismatched instances.
-    } else if (!inRootOrSingleton || !enableHostSingletons) {
+    } else if (!inRootOrSingleton) {
       // Match
       if (
         enableFormActions &&
@@ -1208,7 +1190,15 @@ export function canHydrateTextInstance(
   if (text === '') return null;
 
   while (instance.nodeType !== TEXT_NODE) {
-    if (!inRootOrSingleton || !enableHostSingletons) {
+    if (
+      enableFormActions &&
+      instance.nodeType === ELEMENT_NODE &&
+      instance.nodeName === 'INPUT' &&
+      (instance: any).type === 'hidden'
+    ) {
+      // If we have extra hidden inputs, we don't mismatch. This allows us to
+      // embed extra form data in the original form.
+    } else if (!inRootOrSingleton) {
       return null;
     }
     const nextInstance = getNextHydratableSibling(instance);
@@ -1226,7 +1216,7 @@ export function canHydrateSuspenseInstance(
   inRootOrSingleton: boolean,
 ): null | SuspenseInstance {
   while (instance.nodeType !== COMMENT_NODE) {
-    if (!inRootOrSingleton || !enableHostSingletons) {
+    if (!inRootOrSingleton) {
       return null;
     }
     const nextInstance = getNextHydratableSibling(instance);
@@ -1283,6 +1273,37 @@ export function registerSuspenseInstanceRetry(
   instance._reactRetry = callback;
 }
 
+export function canHydrateFormStateMarker(
+  instance: HydratableInstance,
+  inRootOrSingleton: boolean,
+): null | FormStateMarkerInstance {
+  while (instance.nodeType !== COMMENT_NODE) {
+    if (!inRootOrSingleton) {
+      return null;
+    }
+    const nextInstance = getNextHydratableSibling(instance);
+    if (nextInstance === null) {
+      return null;
+    }
+    instance = nextInstance;
+  }
+  const nodeData = (instance: any).data;
+  if (
+    nodeData === FORM_STATE_IS_MATCHING ||
+    nodeData === FORM_STATE_IS_NOT_MATCHING
+  ) {
+    const markerInstance: FormStateMarkerInstance = (instance: any);
+    return markerInstance;
+  }
+  return null;
+}
+
+export function isFormStateMarkerMatching(
+  markerInstance: FormStateMarkerInstance,
+): boolean {
+  return markerInstance.data === FORM_STATE_IS_MATCHING;
+}
+
 function getNextHydratable(node: ?Node) {
   // Skip non-hydratable nodes.
   for (; node != null; node = ((node: any): Node).nextSibling) {
@@ -1295,7 +1316,11 @@ function getNextHydratable(node: ?Node) {
       if (
         nodeData === SUSPENSE_START_DATA ||
         nodeData === SUSPENSE_FALLBACK_START_DATA ||
-        nodeData === SUSPENSE_PENDING_START_DATA
+        nodeData === SUSPENSE_PENDING_START_DATA ||
+        (enableFormActions &&
+          enableAsyncActions &&
+          (nodeData === FORM_STATE_IS_MATCHING ||
+            nodeData === FORM_STATE_IS_NOT_MATCHING))
       ) {
         break;
       }
@@ -1331,6 +1356,19 @@ export function getFirstHydratableChildWithinSuspenseInstance(
   return getNextHydratable(parentInstance.nextSibling);
 }
 
+export function validateHydratableInstance(
+  type: string,
+  props: Props,
+  hostContext: HostContext,
+): boolean {
+  if (__DEV__) {
+    // TODO: take namespace into account when validating.
+    const hostContextDev: HostContextDev = (hostContext: any);
+    return validateDOMNesting(type, hostContextDev.ancestorInfo);
+  }
+  return true;
+}
+
 export function hydrateInstance(
   instance: Instance,
   type: string,
@@ -1338,7 +1376,7 @@ export function hydrateInstance(
   hostContext: HostContext,
   internalInstanceHandle: Object,
   shouldWarnDev: boolean,
-): null | Array<mixed> {
+): void {
   precacheFiberNode(internalInstanceHandle, instance);
   // TODO: Possibly defer this until the commit phase where all the events
   // get attached.
@@ -1349,7 +1387,7 @@ export function hydrateInstance(
   const isConcurrentMode =
     ((internalInstanceHandle: Fiber).mode & ConcurrentMode) !== NoMode;
 
-  return diffHydratedProperties(
+  diffHydratedProperties(
     instance,
     type,
     props,
@@ -1357,6 +1395,20 @@ export function hydrateInstance(
     shouldWarnDev,
     hostContext,
   );
+}
+
+export function validateHydratableTextInstance(
+  text: string,
+  hostContext: HostContext,
+): boolean {
+  if (__DEV__) {
+    const hostContextDev = ((hostContext: any): HostContextDev);
+    const ancestor = hostContextDev.ancestorInfo.current;
+    if (ancestor != null) {
+      return validateTextNesting(text, ancestor.tag);
+    }
+  }
+  return true;
 }
 
 export function hydrateTextInstance(
@@ -1462,9 +1514,7 @@ export function shouldDeleteUnhydratedTailInstances(
   parentType: string,
 ): boolean {
   return (
-    (enableHostSingletons ||
-      (parentType !== 'head' && parentType !== 'body')) &&
-    (!enableFormActions || (parentType !== 'form' && parentType !== 'button'))
+    !enableFormActions || (parentType !== 'form' && parentType !== 'button')
   );
 }
 
@@ -2061,16 +2111,15 @@ function getDocumentFromRoot(root: HoistableRoot): Document {
   return root.ownerDocument || root;
 }
 
-// We want this to be the default dispatcher on ReactDOMSharedInternals but we don't want to mutate
-// internals in Module scope. Instead we export it and Internals will import it. There is already a cycle
-// from Internals -> ReactDOM -> HostConfig -> Internals so this doesn't introduce a new one.
-export const ReactDOMClientDispatcher: HostDispatcher = {
+const previousDispatcher = ReactDOMCurrentDispatcher.current;
+ReactDOMCurrentDispatcher.current = {
   prefetchDNS,
   preconnect,
   preload,
   preloadModule,
-  preinit,
-  preinitModule,
+  preinitStyle,
+  preinitScript,
+  preinitModuleScript,
 };
 
 // We expect this to get inlined. It is a function mostly to communicate the special nature of
@@ -2079,17 +2128,18 @@ export const ReactDOMClientDispatcher: HostDispatcher = {
 // and so we have to fall back to something universal. Currently we just refer to the global document.
 // This is notable because nowhere else in ReactDOM do we actually reference the global document or window
 // because we may be rendering inside an iframe.
-function getDocumentForImperativeFloatMethods(): Document {
-  return document;
+const globalDocument = typeof document === 'undefined' ? null : document;
+function getGlobalDocument(): ?Document {
+  return globalDocument;
 }
 
 function preconnectAs(
   rel: 'preconnect' | 'dns-prefetch',
-  crossOrigin: null | '' | 'use-credentials',
   href: string,
+  crossOrigin: ?CrossOriginEnum,
 ) {
-  const ownerDocument = getDocumentForImperativeFloatMethods();
-  if (typeof href === 'string' && href) {
+  const ownerDocument = getGlobalDocument();
+  if (ownerDocument && typeof href === 'string' && href) {
     const limitedEscapedHref =
       escapeSelectorAttributeValueInsideDoubleQuotes(href);
     let key = `link[rel="${rel}"][href="${limitedEscapedHref}"]`;
@@ -2110,119 +2160,40 @@ function preconnectAs(
   }
 }
 
-function prefetchDNS(href: string, options?: ?PrefetchDNSOptions) {
+function prefetchDNS(href: string) {
   if (!enableFloat) {
     return;
   }
-  if (__DEV__) {
-    if (typeof href !== 'string' || !href) {
-      console.error(
-        'ReactDOM.prefetchDNS(): Expected the `href` argument (first) to be a non-empty string but encountered %s instead.',
-        getValueDescriptorExpectingObjectForWarning(href),
-      );
-    } else if (options != null) {
-      if (
-        typeof options === 'object' &&
-        hasOwnProperty.call(options, 'crossOrigin')
-      ) {
-        console.error(
-          'ReactDOM.prefetchDNS(): Expected only one argument, `href`, but encountered %s as a second argument instead. This argument is reserved for future options and is currently disallowed. It looks like the you are attempting to set a crossOrigin property for this DNS lookup hint. Browsers do not perform DNS queries using CORS and setting this attribute on the resource hint has no effect. Try calling ReactDOM.prefetchDNS() with just a single string argument, `href`.',
-          getValueDescriptorExpectingEnumForWarning(options),
-        );
-      } else {
-        console.error(
-          'ReactDOM.prefetchDNS(): Expected only one argument, `href`, but encountered %s as a second argument instead. This argument is reserved for future options and is currently disallowed. Try calling ReactDOM.prefetchDNS() with just a single string argument, `href`.',
-          getValueDescriptorExpectingEnumForWarning(options),
-        );
-      }
-    }
-  }
-  preconnectAs('dns-prefetch', null, href);
+  previousDispatcher.prefetchDNS(href);
+  preconnectAs('dns-prefetch', href, null);
 }
 
-function preconnect(href: string, options?: ?PreconnectOptions) {
+function preconnect(href: string, crossOrigin?: ?CrossOriginEnum) {
   if (!enableFloat) {
     return;
   }
-  if (__DEV__) {
-    if (typeof href !== 'string' || !href) {
-      console.error(
-        'ReactDOM.preconnect(): Expected the `href` argument (first) to be a non-empty string but encountered %s instead.',
-        getValueDescriptorExpectingObjectForWarning(href),
-      );
-    } else if (options != null && typeof options !== 'object') {
-      console.error(
-        'ReactDOM.preconnect(): Expected the `options` argument (second) to be an object but encountered %s instead. The only supported option at this time is `crossOrigin` which accepts a string.',
-        getValueDescriptorExpectingEnumForWarning(options),
-      );
-    } else if (options != null && typeof options.crossOrigin !== 'string') {
-      console.error(
-        'ReactDOM.preconnect(): Expected the `crossOrigin` option (second argument) to be a string but encountered %s instead. Try removing this option or passing a string value instead.',
-        getValueDescriptorExpectingObjectForWarning(options.crossOrigin),
-      );
-    }
-  }
-  const crossOrigin =
-    options == null || typeof options.crossOrigin !== 'string'
-      ? null
-      : options.crossOrigin === 'use-credentials'
-      ? 'use-credentials'
-      : '';
-  preconnectAs('preconnect', crossOrigin, href);
+  previousDispatcher.preconnect(href, crossOrigin);
+  preconnectAs('preconnect', href, crossOrigin);
 }
 
-function preload(href: string, options: PreloadOptions) {
+function preload(href: string, as: string, options?: ?PreloadImplOptions) {
   if (!enableFloat) {
     return;
   }
-  if (__DEV__) {
-    // TODO move this to ReactDOMFloat and expose a stricter function interface or possibly
-    // typed functions (preloadImage, preloadStyle, ...)
-    let encountered = '';
-    if (typeof href !== 'string' || !href) {
-      encountered += `The \`href\` argument encountered was ${getValueDescriptorExpectingObjectForWarning(
-        href,
-      )}.`;
-    }
-    if (options == null || typeof options !== 'object') {
-      encountered += `The \`options\` argument encountered was ${getValueDescriptorExpectingObjectForWarning(
-        options,
-      )}.`;
-    } else if (typeof options.as !== 'string' || !options.as) {
-      encountered += `The \`as\` option encountered was ${getValueDescriptorExpectingObjectForWarning(
-        options.as,
-      )}.`;
-    }
-    if (encountered) {
-      console.error(
-        'ReactDOM.preload(): Expected two arguments, a non-empty `href` string and an `options` object with an `as` property valid for a `<link rel="preload" as="..." />` tag. %s',
-        encountered,
-      );
-    }
-  }
-  const ownerDocument = getDocumentForImperativeFloatMethods();
-  if (
-    typeof href === 'string' &&
-    href &&
-    typeof options === 'object' &&
-    options !== null &&
-    typeof options.as === 'string' &&
-    options.as &&
-    ownerDocument
-  ) {
-    const as = options.as;
+  previousDispatcher.preload(href, as, options);
+  const ownerDocument = getGlobalDocument();
+  if (ownerDocument && href && as) {
     let preloadSelector = `link[rel="preload"][as="${escapeSelectorAttributeValueInsideDoubleQuotes(
       as,
     )}"]`;
     if (as === 'image') {
-      const {imageSrcSet, imageSizes} = options;
-      if (typeof imageSrcSet === 'string' && imageSrcSet !== '') {
+      if (options && options.imageSrcSet) {
         preloadSelector += `[imagesrcset="${escapeSelectorAttributeValueInsideDoubleQuotes(
-          imageSrcSet,
+          options.imageSrcSet,
         )}"]`;
-        if (typeof imageSizes === 'string') {
+        if (typeof options.imageSizes === 'string') {
           preloadSelector += `[imagesizes="${escapeSelectorAttributeValueInsideDoubleQuotes(
-            imageSizes,
+            options.imageSizes,
           )}"]`;
         }
       } else {
@@ -2248,7 +2219,19 @@ function preload(href: string, options: PreloadOptions) {
         break;
     }
     if (!preloadPropsMap.has(key)) {
-      const preloadProps = preloadPropsFromPreloadOptions(href, as, options);
+      const preloadProps = Object.assign(
+        ({
+          rel: 'preload',
+          // There is a bug in Safari where imageSrcSet is not respected on preload links
+          // so we omit the href here if we have imageSrcSet b/c safari will load the wrong image.
+          // This harms older browers that do not support imageSrcSet by making their preloads not work
+          // but this population is shrinking fast and is already small so we accept this tradeoff.
+          href:
+            as === 'image' && options && options.imageSrcSet ? undefined : href,
+          as,
+        }: PreloadProps),
+        options,
+      );
       preloadPropsMap.set(key, preloadProps);
 
       if (null === ownerDocument.querySelector(preloadSelector)) {
@@ -2274,35 +2257,13 @@ function preload(href: string, options: PreloadOptions) {
   }
 }
 
-function preloadModule(href: string, options?: ?PreloadModuleOptions) {
+function preloadModule(href: string, options?: ?PreloadModuleImplOptions) {
   if (!enableFloat) {
     return;
   }
-  if (__DEV__) {
-    let encountered = '';
-    if (typeof href !== 'string' || !href) {
-      encountered += ` The \`href\` argument encountered was ${getValueDescriptorExpectingObjectForWarning(
-        href,
-      )}.`;
-    }
-    if (options !== undefined && typeof options !== 'object') {
-      encountered += ` The \`options\` argument encountered was ${getValueDescriptorExpectingObjectForWarning(
-        options,
-      )}.`;
-    } else if (options && 'as' in options && typeof options.as !== 'string') {
-      encountered += ` The \`as\` option encountered was ${getValueDescriptorExpectingObjectForWarning(
-        options.as,
-      )}.`;
-    }
-    if (encountered) {
-      console.error(
-        'ReactDOM.preloadModule(): Expected two arguments, a non-empty `href` string and, optionally, an `options` object with an `as` property valid for a `<link rel="modulepreload" as="..." />` tag.%s',
-        encountered,
-      );
-    }
-  }
-  const ownerDocument = getDocumentForImperativeFloatMethods();
-  if (typeof href === 'string' && href) {
+  previousDispatcher.preloadModule(href, options);
+  const ownerDocument = getGlobalDocument();
+  if (ownerDocument && href) {
     const as =
       options && typeof options.as === 'string' ? options.as : 'script';
     const preloadSelector = `link[rel="modulepreload"][as="${escapeSelectorAttributeValueInsideDoubleQuotes(
@@ -2325,12 +2286,14 @@ function preloadModule(href: string, options?: ?PreloadModuleOptions) {
     }
 
     if (!preloadPropsMap.has(key)) {
-      const preloadProps = preloadModulePropsFromPreloadModuleOptions(
-        href,
-        as,
+      const props: PreloadModuleProps = Object.assign(
+        ({
+          rel: 'modulepreload',
+          href,
+        }: PreloadModuleProps),
         options,
       );
-      preloadPropsMap.set(key, preloadProps);
+      preloadPropsMap.set(key, props);
 
       if (null === ownerDocument.querySelector(preloadSelector)) {
         switch (as) {
@@ -2346,7 +2309,7 @@ function preloadModule(href: string, options?: ?PreloadModuleOptions) {
           }
         }
         const instance = ownerDocument.createElement('link');
-        setInitialProperties(instance, 'link', preloadProps);
+        setInitialProperties(instance, 'link', props);
         markNodeAsHoistable(instance);
         (ownerDocument.head: any).appendChild(instance);
       }
@@ -2354,314 +2317,201 @@ function preloadModule(href: string, options?: ?PreloadModuleOptions) {
   }
 }
 
-function preloadPropsFromPreloadOptions(
+function preinitStyle(
   href: string,
-  as: string,
-  options: PreloadOptions,
-): PreloadProps {
-  return {
-    rel: 'preload',
-    as,
-    // There is a bug in Safari where imageSrcSet is not respected on preload links
-    // so we omit the href here if we have imageSrcSet b/c safari will load the wrong image.
-    // This harms older browers that do not support imageSrcSet by making their preloads not work
-    // but this population is shrinking fast and is already small so we accept this tradeoff.
-    href: as === 'image' && options.imageSrcSet ? undefined : href,
-    crossOrigin: as === 'font' ? '' : options.crossOrigin,
-    integrity: options.integrity,
-    type: options.type,
-    nonce: options.nonce,
-    fetchPriority: options.fetchPriority,
-    imageSrcSet: options.imageSrcSet,
-    imageSizes: options.imageSizes,
-    referrerPolicy: options.referrerPolicy,
-  };
-}
-
-function preloadModulePropsFromPreloadModuleOptions(
-  href: string,
-  as: string,
-  options: ?PreloadModuleOptions,
-): PreloadModuleProps {
-  return {
-    rel: 'modulepreload',
-    as: as !== 'script' ? as : undefined,
-    href,
-    crossOrigin: options ? options.crossOrigin : undefined,
-    integrity: options ? options.integrity : undefined,
-  };
-}
-
-function preinit(href: string, options: PreinitOptions) {
+  precedence: ?string,
+  options?: ?PreinitStyleOptions,
+) {
   if (!enableFloat) {
     return;
   }
-  if (__DEV__) {
-    validatePreinitArguments(href, options);
-  }
-  const ownerDocument = getDocumentForImperativeFloatMethods();
+  previousDispatcher.preinitStyle(href, precedence, options);
 
-  if (
-    typeof href === 'string' &&
-    href &&
-    typeof options === 'object' &&
-    options !== null
-  ) {
-    const as = options.as;
+  const ownerDocument = getGlobalDocument();
+  if (ownerDocument && href) {
+    const styles = getResourcesFromRoot(ownerDocument).hoistableStyles;
 
-    switch (as) {
-      case 'style': {
-        const styles = getResourcesFromRoot(ownerDocument).hoistableStyles;
+    const key = getStyleKey(href);
+    precedence = precedence || 'default';
 
-        const key = getStyleKey(href);
-        const precedence = options.precedence || 'default';
-
-        // Check if this resource already exists
-        let resource = styles.get(key);
-        if (resource) {
-          // We can early return. The resource exists and there is nothing
-          // more to do
-          return;
-        }
-
-        const state = {
-          loading: NotLoaded,
-          preload: null,
-        };
-
-        // Attempt to hydrate instance from DOM
-        let instance: null | Instance = ownerDocument.querySelector(
-          getStylesheetSelectorFromKey(key),
-        );
-        if (instance) {
-          state.loading = Loaded;
-        } else {
-          // Construct a new instance and insert it
-          const stylesheetProps = stylesheetPropsFromPreinitOptions(
-            href,
-            precedence,
-            options,
-          );
-          const preloadProps = preloadPropsMap.get(key);
-          if (preloadProps) {
-            adoptPreloadPropsForStylesheet(stylesheetProps, preloadProps);
-          }
-          const link = (instance = ownerDocument.createElement('link'));
-          markNodeAsHoistable(link);
-          setInitialProperties(link, 'link', stylesheetProps);
-
-          (link: any)._p = new Promise((resolve, reject) => {
-            link.onload = resolve;
-            link.onerror = reject;
-          });
-          link.addEventListener('load', () => {
-            state.loading |= Loaded;
-          });
-          link.addEventListener('error', () => {
-            state.loading |= Errored;
-          });
-
-          state.loading |= Inserted;
-          insertStylesheet(instance, precedence, ownerDocument);
-        }
-
-        // Construct a Resource and cache it
-        resource = {
-          type: 'stylesheet',
-          instance,
-          count: 1,
-          state,
-        };
-        styles.set(key, resource);
-        return;
-      }
-      case 'script': {
-        const src = href;
-        const scripts = getResourcesFromRoot(ownerDocument).hoistableScripts;
-
-        const key = getScriptKey(src);
-
-        // Check if this resource already exists
-        let resource = scripts.get(key);
-        if (resource) {
-          // We can early return. The resource exists and there is nothing
-          // more to do
-          return;
-        }
-
-        // Attempt to hydrate instance from DOM
-        let instance: null | Instance = ownerDocument.querySelector(
-          getScriptSelectorFromKey(key),
-        );
-        if (!instance) {
-          // Construct a new instance and insert it
-          const scriptProps = scriptPropsFromPreinitOptions(src, options);
-          // Adopt certain preload props
-          const preloadProps = preloadPropsMap.get(key);
-          if (preloadProps) {
-            adoptPreloadPropsForScript(scriptProps, preloadProps);
-          }
-          instance = ownerDocument.createElement('script');
-          markNodeAsHoistable(instance);
-          setInitialProperties(instance, 'link', scriptProps);
-          (ownerDocument.head: any).appendChild(instance);
-        }
-
-        // Construct a Resource and cache it
-        resource = {
-          type: 'script',
-          instance,
-          count: 1,
-          state: null,
-        };
-        scripts.set(key, resource);
-        return;
-      }
+    // Check if this resource already exists
+    let resource = styles.get(key);
+    if (resource) {
+      // We can early return. The resource exists and there is nothing
+      // more to do
+      return;
     }
-  }
-}
 
-function preinitModule(href: string, options?: ?PreinitModuleOptions) {
-  if (!enableFloat) {
-    return;
-  }
-  if (__DEV__) {
-    let encountered = '';
-    if (typeof href !== 'string' || !href) {
-      encountered += ` The \`href\` argument encountered was ${getValueDescriptorExpectingObjectForWarning(
-        href,
-      )}.`;
-    }
-    if (options !== undefined && typeof options !== 'object') {
-      encountered += ` The \`options\` argument encountered was ${getValueDescriptorExpectingObjectForWarning(
-        options,
-      )}.`;
-    } else if (options && 'as' in options && options.as !== 'script') {
-      encountered += ` The \`as\` option encountered was ${getValueDescriptorExpectingEnumForWarning(
-        options.as,
-      )}.`;
-    }
-    if (encountered) {
-      console.error(
-        'ReactDOM.preinitModule(): Expected up to two arguments, a non-empty `href` string and, optionally, an `options` object with a valid `as` property.%s',
-        encountered,
-      );
+    const state = {
+      loading: NotLoaded,
+      preload: null,
+    };
+
+    // Attempt to hydrate instance from DOM
+    let instance: null | Instance = ownerDocument.querySelector(
+      getStylesheetSelectorFromKey(key),
+    );
+    if (instance) {
+      state.loading = Loaded | Inserted;
     } else {
-      const as =
-        options && typeof options.as === 'string' ? options.as : 'script';
-      switch (as) {
-        case 'script': {
-          break;
-        }
-
-        // We have an invalid as type and need to warn
-        default: {
-          const typeOfAs = getValueDescriptorExpectingEnumForWarning(as);
-          console.error(
-            'ReactDOM.preinitModule(): Currently the only supported "as" type for this function is "script"' +
-              ' but received "%s" instead. This warning was generated for `href` "%s". In the future other' +
-              ' module types will be supported, aligning with the import-attributes proposal. Learn more here:' +
-              ' (https://github.com/tc39/proposal-import-attributes)',
-            typeOfAs,
-            href,
-          );
-        }
+      // Construct a new instance and insert it
+      const stylesheetProps = Object.assign(
+        ({
+          rel: 'stylesheet',
+          href,
+          'data-precedence': precedence,
+        }: StylesheetProps),
+        options,
+      );
+      const preloadProps = preloadPropsMap.get(key);
+      if (preloadProps) {
+        adoptPreloadPropsForStylesheet(stylesheetProps, preloadProps);
       }
+      const link = (instance = ownerDocument.createElement('link'));
+      markNodeAsHoistable(link);
+      setInitialProperties(link, 'link', stylesheetProps);
+
+      (link: any)._p = new Promise((resolve, reject) => {
+        link.onload = resolve;
+        link.onerror = reject;
+      });
+      link.addEventListener('load', () => {
+        state.loading |= Loaded;
+      });
+      link.addEventListener('error', () => {
+        state.loading |= Errored;
+      });
+
+      state.loading |= Inserted;
+      insertStylesheet(instance, precedence, ownerDocument);
     }
-  }
-  const ownerDocument = getDocumentForImperativeFloatMethods();
 
-  if (typeof href === 'string' && href) {
-    const as =
-      options && typeof options.as === 'string' ? options.as : 'script';
-
-    switch (as) {
-      case 'script': {
-        const src = href;
-        const scripts = getResourcesFromRoot(ownerDocument).hoistableScripts;
-
-        const key = getScriptKey(src);
-
-        // Check if this resource already exists
-        let resource = scripts.get(key);
-        if (resource) {
-          // We can early return. The resource exists and there is nothing
-          // more to do
-          return;
-        }
-
-        // Attempt to hydrate instance from DOM
-        let instance: null | Instance = ownerDocument.querySelector(
-          getScriptSelectorFromKey(key),
-        );
-        if (!instance) {
-          // Construct a new instance and insert it
-          const scriptProps = modulePropsFromPreinitModuleOptions(src, options);
-          // Adopt certain preload props
-          const preloadProps = preloadPropsMap.get(key);
-          if (preloadProps) {
-            adoptPreloadPropsForScript(scriptProps, preloadProps);
-          }
-          instance = ownerDocument.createElement('script');
-          markNodeAsHoistable(instance);
-          setInitialProperties(instance, 'link', scriptProps);
-          (ownerDocument.head: any).appendChild(instance);
-        }
-
-        // Construct a Resource and cache it
-        resource = {
-          type: 'script',
-          instance,
-          count: 1,
-          state: null,
-        };
-        scripts.set(key, resource);
-        return;
-      }
-    }
+    // Construct a Resource and cache it
+    resource = {
+      type: 'stylesheet',
+      instance,
+      count: 1,
+      state,
+    };
+    styles.set(key, resource);
+    return;
   }
 }
 
-function stylesheetPropsFromPreinitOptions(
-  href: string,
-  precedence: string,
-  options: PreinitOptions,
-): StylesheetProps {
-  return {
-    rel: 'stylesheet',
-    href,
-    'data-precedence': precedence,
-    crossOrigin: options.crossOrigin,
-    integrity: options.integrity,
-    fetchPriority: options.fetchPriority,
-  };
+function preinitScript(src: string, options?: ?PreinitScriptOptions) {
+  if (!enableFloat) {
+    return;
+  }
+  previousDispatcher.preinitScript(src, options);
+
+  const ownerDocument = getGlobalDocument();
+  if (ownerDocument && src) {
+    const scripts = getResourcesFromRoot(ownerDocument).hoistableScripts;
+
+    const key = getScriptKey(src);
+
+    // Check if this resource already exists
+    let resource = scripts.get(key);
+    if (resource) {
+      // We can early return. The resource exists and there is nothing
+      // more to do
+      return;
+    }
+
+    // Attempt to hydrate instance from DOM
+    let instance: null | Instance = ownerDocument.querySelector(
+      getScriptSelectorFromKey(key),
+    );
+    if (!instance) {
+      // Construct a new instance and insert it
+      const scriptProps = Object.assign(
+        ({
+          src,
+          async: true,
+        }: ScriptProps),
+        options,
+      );
+      // Adopt certain preload props
+      const preloadProps = preloadPropsMap.get(key);
+      if (preloadProps) {
+        adoptPreloadPropsForScript(scriptProps, preloadProps);
+      }
+      instance = ownerDocument.createElement('script');
+      markNodeAsHoistable(instance);
+      setInitialProperties(instance, 'link', scriptProps);
+      (ownerDocument.head: any).appendChild(instance);
+    }
+
+    // Construct a Resource and cache it
+    resource = {
+      type: 'script',
+      instance,
+      count: 1,
+      state: null,
+    };
+    scripts.set(key, resource);
+    return;
+  }
 }
 
-function scriptPropsFromPreinitOptions(
+function preinitModuleScript(
   src: string,
-  options: PreinitOptions,
-): ScriptProps {
-  return {
-    src,
-    async: true,
-    crossOrigin: options.crossOrigin,
-    integrity: options.integrity,
-    nonce: options.nonce,
-    fetchPriority: options.fetchPriority,
-  };
-}
+  options?: ?PreinitModuleScriptOptions,
+) {
+  if (!enableFloat) {
+    return;
+  }
+  previousDispatcher.preinitModuleScript(src, options);
 
-function modulePropsFromPreinitModuleOptions(
-  src: string,
-  options: ?PreinitModuleOptions,
-): ScriptProps {
-  return {
-    src,
-    async: true,
-    type: 'module',
-    crossOrigin: options ? options.crossOrigin : undefined,
-    integrity: options ? options.integrity : undefined,
-  };
+  const ownerDocument = getGlobalDocument();
+  if (ownerDocument && src) {
+    const scripts = getResourcesFromRoot(ownerDocument).hoistableScripts;
+
+    const key = getScriptKey(src);
+
+    // Check if this resource already exists
+    let resource = scripts.get(key);
+    if (resource) {
+      // We can early return. The resource exists and there is nothing
+      // more to do
+      return;
+    }
+
+    // Attempt to hydrate instance from DOM
+    let instance: null | Instance = ownerDocument.querySelector(
+      getScriptSelectorFromKey(key),
+    );
+    if (!instance) {
+      // Construct a new instance and insert it
+      const scriptProps = Object.assign(
+        ({
+          src,
+          async: true,
+          type: 'module',
+        }: ScriptProps),
+        options,
+      );
+      // Adopt certain preload props
+      const preloadProps = preloadPropsMap.get(key);
+      if (preloadProps) {
+        adoptPreloadPropsForScript(scriptProps, preloadProps);
+      }
+      instance = ownerDocument.createElement('script');
+      markNodeAsHoistable(instance);
+      setInitialProperties(instance, 'link', scriptProps);
+      (ownerDocument.head: any).appendChild(instance);
+    }
+
+    // Construct a Resource and cache it
+    resource = {
+      type: 'script',
+      instance,
+      count: 1,
+      state: null,
+    };
+    scripts.set(key, resource);
+    return;
+  }
 }
 
 type StyleTagQualifyingProps = {
@@ -2936,6 +2786,7 @@ export function acquireResource(
           getStylesheetSelectorFromKey(key),
         );
         if (instance) {
+          resource.state.loading |= Inserted;
           resource.instance = instance;
           markNodeAsHoistable(instance);
           return instance;
@@ -3527,71 +3378,73 @@ export function suspendResource(
         return;
       }
     }
-    if (resource.instance === null) {
-      const qualifiedProps: StylesheetQualifyingProps = props;
-      const key = getStyleKey(qualifiedProps.href);
+    if ((resource.state.loading & Inserted) === NotLoaded) {
+      if (resource.instance === null) {
+        const qualifiedProps: StylesheetQualifyingProps = props;
+        const key = getStyleKey(qualifiedProps.href);
 
-      // Attempt to hydrate instance from DOM
-      let instance: null | Instance = hoistableRoot.querySelector(
-        getStylesheetSelectorFromKey(key),
-      );
-      if (instance) {
-        // If this instance has a loading state it came from the Fizz runtime.
-        // If there is not loading state it is assumed to have been server rendered
-        // as part of the preamble and therefore synchronously loaded. It could have
-        // errored however which we still do not yet have a means to detect. For now
-        // we assume it is loaded.
-        const maybeLoadingState: ?Promise<mixed> = (instance: any)._p;
-        if (
-          maybeLoadingState !== null &&
-          typeof maybeLoadingState === 'object' &&
-          // $FlowFixMe[method-unbinding]
-          typeof maybeLoadingState.then === 'function'
-        ) {
-          const loadingState = maybeLoadingState;
-          state.count++;
-          const ping = onUnsuspend.bind(state);
-          loadingState.then(ping, ping);
+        // Attempt to hydrate instance from DOM
+        let instance: null | Instance = hoistableRoot.querySelector(
+          getStylesheetSelectorFromKey(key),
+        );
+        if (instance) {
+          // If this instance has a loading state it came from the Fizz runtime.
+          // If there is not loading state it is assumed to have been server rendered
+          // as part of the preamble and therefore synchronously loaded. It could have
+          // errored however which we still do not yet have a means to detect. For now
+          // we assume it is loaded.
+          const maybeLoadingState: ?Promise<mixed> = (instance: any)._p;
+          if (
+            maybeLoadingState !== null &&
+            typeof maybeLoadingState === 'object' &&
+            // $FlowFixMe[method-unbinding]
+            typeof maybeLoadingState.then === 'function'
+          ) {
+            const loadingState = maybeLoadingState;
+            state.count++;
+            const ping = onUnsuspend.bind(state);
+            loadingState.then(ping, ping);
+          }
+          resource.state.loading |= Inserted;
+          resource.instance = instance;
+          markNodeAsHoistable(instance);
+          return;
         }
-        resource.state.loading |= Inserted;
-        resource.instance = instance;
+
+        const ownerDocument = getDocumentFromRoot(hoistableRoot);
+
+        const stylesheetProps = stylesheetPropsFromRawProps(props);
+        const preloadProps = preloadPropsMap.get(key);
+        if (preloadProps) {
+          adoptPreloadPropsForStylesheet(stylesheetProps, preloadProps);
+        }
+
+        // Construct and insert a new instance
+        instance = ownerDocument.createElement('link');
         markNodeAsHoistable(instance);
-        return;
+        const linkInstance: HTMLLinkElement = (instance: any);
+        // This Promise is a loading state used by the Fizz runtime. We need this incase there is a race
+        // between this resource being rendered on the client and being rendered with a late completed boundary.
+        (linkInstance: any)._p = new Promise((resolve, reject) => {
+          linkInstance.onload = resolve;
+          linkInstance.onerror = reject;
+        });
+        setInitialProperties(instance, 'link', stylesheetProps);
+        resource.instance = instance;
       }
 
-      const ownerDocument = getDocumentFromRoot(hoistableRoot);
-
-      const stylesheetProps = stylesheetPropsFromRawProps(props);
-      const preloadProps = preloadPropsMap.get(key);
-      if (preloadProps) {
-        adoptPreloadPropsForStylesheet(stylesheetProps, preloadProps);
+      if (state.stylesheets === null) {
+        state.stylesheets = new Map();
       }
+      state.stylesheets.set(resource, hoistableRoot);
 
-      // Construct and insert a new instance
-      instance = ownerDocument.createElement('link');
-      markNodeAsHoistable(instance);
-      const linkInstance: HTMLLinkElement = (instance: any);
-      // This Promise is a loading state used by the Fizz runtime. We need this incase there is a race
-      // between this resource being rendered on the client and being rendered with a late completed boundary.
-      (linkInstance: any)._p = new Promise((resolve, reject) => {
-        linkInstance.onload = resolve;
-        linkInstance.onerror = reject;
-      });
-      setInitialProperties(instance, 'link', stylesheetProps);
-      resource.instance = instance;
-    }
-
-    if (state.stylesheets === null) {
-      state.stylesheets = new Map();
-    }
-    state.stylesheets.set(resource, hoistableRoot);
-
-    const preloadEl = resource.state.preload;
-    if (preloadEl && (resource.state.loading & Settled) === NotLoaded) {
-      state.count++;
-      const ping = onUnsuspend.bind(state);
-      preloadEl.addEventListener('load', ping);
-      preloadEl.addEventListener('error', ping);
+      const preloadEl = resource.state.preload;
+      if (preloadEl && (resource.state.loading & Settled) === NotLoaded) {
+        state.count++;
+        const ping = onUnsuspend.bind(state);
+        preloadEl.addEventListener('load', ping);
+        preloadEl.addEventListener('error', ping);
+      }
     }
   }
 }
@@ -3662,10 +3515,20 @@ function onUnsuspend(this: SuspendedState) {
   }
 }
 
+// We use a value that is type distinct from precedence to track which one is last.
+// This ensures there is no collision with user defined precedences. Normally we would
+// just track this in module scope but since the precedences are tracked per HoistableRoot
+// we need to associate it to something other than a global scope hence why we try to
+// colocate it with the map of precedences in the first place
+const LAST_PRECEDENCE = null;
+
 // This is typecast to non-null because it will always be set before read.
 // it is important that this not be used except when the stack guarantees it exists.
 // Currentlyt his is only during insertSuspendedStylesheet.
-let precedencesByRoot: Map<HoistableRoot, Map<string, Instance>> = (null: any);
+let precedencesByRoot: Map<
+  HoistableRoot,
+  Map<string | typeof LAST_PRECEDENCE, Instance>,
+> = (null: any);
 
 function insertSuspendedStylesheets(
   state: SuspendedState,
@@ -3720,15 +3583,15 @@ function insertStylesheetIntoRoot(
         // and will be hoisted by the Fizz runtime imminently.
         node.getAttribute('media') !== 'not all'
       ) {
-        precedences.set('p' + node.dataset.precedence, node);
+        precedences.set(node.dataset.precedence, node);
         last = node;
       }
     }
     if (last) {
-      precedences.set('last', last);
+      precedences.set(LAST_PRECEDENCE, last);
     }
   } else {
-    last = precedences.get('last');
+    last = precedences.get(LAST_PRECEDENCE);
   }
 
   // We only call this after we have constructed an instance so we assume it here
@@ -3736,9 +3599,9 @@ function insertStylesheetIntoRoot(
   // We will always have a precedence for stylesheet instances
   const precedence: string = (instance.getAttribute('data-precedence'): any);
 
-  const prior = precedences.get('p' + precedence) || last;
+  const prior = precedences.get(precedence) || last;
   if (prior === last) {
-    precedences.set('last', instance);
+    precedences.set(LAST_PRECEDENCE, instance);
   }
   precedences.set(precedence, instance);
 

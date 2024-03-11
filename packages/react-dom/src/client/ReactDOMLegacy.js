@@ -14,6 +14,7 @@ import type {
 import type {FiberRoot} from 'react-reconciler/src/ReactInternalTypes';
 import type {ReactNodeList} from 'shared/ReactTypes';
 
+import {disableLegacyMode} from 'shared/ReactFeatureFlags';
 import {clearContainer} from 'react-dom-bindings/src/client/ReactFiberConfigDOM';
 import {
   getInstanceFromNode,
@@ -43,7 +44,6 @@ import {LegacyRoot} from 'react-reconciler/src/ReactRootTags';
 import getComponentNameFromType from 'shared/getComponentNameFromType';
 import ReactSharedInternals from 'shared/ReactSharedInternals';
 import {has as hasInstance} from 'shared/ReactInstanceMap';
-import {enableHostSingletons} from '../../../shared/ReactFeatureFlags';
 
 const ReactCurrentOwner = ReactSharedInternals.ReactCurrentOwner;
 
@@ -58,7 +58,7 @@ if (__DEV__) {
       if (hostInstance) {
         if (hostInstance.parentNode !== container) {
           console.error(
-            'render(...): It looks like the React-rendered content of this ' +
+            'It looks like the React-rendered content of this ' +
               'container was removed without using React. This is not ' +
               'supported and will cause errors. Instead, call ' +
               'ReactDOM.unmountComponentAtNode to empty a container.',
@@ -73,25 +73,10 @@ if (__DEV__) {
 
     if (hasNonRootReactChild && !isRootRenderedBySomeReact) {
       console.error(
-        'render(...): Replacing React-rendered children with a new root ' +
+        'Replacing React-rendered children with a new root ' +
           'component. If you intended to update the children of this node, ' +
           'you should instead have the existing children update their state ' +
           'and render the new components instead of calling ReactDOM.render.',
-      );
-    }
-
-    if (
-      !enableHostSingletons &&
-      container.nodeType === ELEMENT_NODE &&
-      ((container: any): Element).tagName &&
-      ((container: any): Element).tagName.toUpperCase() === 'BODY'
-    ) {
-      console.error(
-        'render(): Rendering components directly into document.body is ' +
-          'discouraged, since its children are often manipulated by third-party ' +
-          'scripts and browser extensions. This may lead to subtle ' +
-          'reconciliation issues. Try rendering into a container element created ' +
-          'for your app.',
       );
     }
   };
@@ -141,6 +126,7 @@ function legacyCreateRootFromDOMContainer(
       '', // identifierPrefix
       noopOnRecoverableError,
       // TODO(luna) Support hydration later
+      null,
       null,
     );
     container._reactRootContainer = root;
@@ -192,13 +178,12 @@ function legacyCreateRootFromDOMContainer(
   }
 }
 
-function warnOnInvalidCallback(callback: mixed, callerName: string): void {
+function warnOnInvalidCallback(callback: mixed): void {
   if (__DEV__) {
     if (callback !== null && typeof callback !== 'function') {
       console.error(
-        '%s(...): Expected the last optional `callback` argument to be a ' +
+        'Expected the last optional `callback` argument to be a ' +
           'function. Instead received: %s.',
-        callerName,
         callback,
       );
     }
@@ -214,7 +199,7 @@ function legacyRenderSubtreeIntoContainer(
 ): React$Component<any, any> | PublicInstance | null {
   if (__DEV__) {
     topLevelUpdateWarnings(container);
-    warnOnInvalidCallback(callback === undefined ? null : callback, 'render');
+    warnOnInvalidCallback(callback === undefined ? null : callback);
   }
 
   const maybeRoot = container._reactRootContainer;
@@ -280,12 +265,20 @@ export function hydrate(
   container: Container,
   callback: ?Function,
 ): React$Component<any, any> | PublicInstance | null {
+  if (disableLegacyMode) {
+    if (__DEV__) {
+      console.error(
+        'ReactDOM.hydrate is no longer supported in React 18. Use hydrateRoot instead',
+      );
+    }
+    throw new Error('ReactDOM: Unsupported Legacy Mode API.');
+  }
   if (__DEV__) {
     console.error(
       'ReactDOM.hydrate is no longer supported in React 18. Use hydrateRoot ' +
         'instead. Until you switch to the new API, your app will behave as ' +
         "if it's running React 17. Learn " +
-        'more: https://reactjs.org/link/switch-to-createroot',
+        'more: https://react.dev/link/switch-to-createroot',
     );
   }
 
@@ -320,12 +313,20 @@ export function render(
   container: Container,
   callback: ?Function,
 ): React$Component<any, any> | PublicInstance | null {
+  if (disableLegacyMode) {
+    if (__DEV__) {
+      console.error(
+        'ReactDOM.render is no longer supported in React 18. Use createRoot instead.',
+      );
+    }
+    throw new Error('ReactDOM: Unsupported Legacy Mode API.');
+  }
   if (__DEV__) {
     console.error(
       'ReactDOM.render is no longer supported in React 18. Use createRoot ' +
         'instead. Until you switch to the new API, your app will behave as ' +
         "if it's running React 17. Learn " +
-        'more: https://reactjs.org/link/switch-to-createroot',
+        'more: https://react.dev/link/switch-to-createroot',
     );
   }
 
@@ -360,12 +361,20 @@ export function unstable_renderSubtreeIntoContainer(
   containerNode: Container,
   callback: ?Function,
 ): React$Component<any, any> | PublicInstance | null {
+  if (disableLegacyMode) {
+    if (__DEV__) {
+      console.error(
+        'ReactDOM.unstable_renderSubtreeIntoContainer() is no longer supported in React 18. Consider using a portal instead.',
+      );
+    }
+    throw new Error('ReactDOM: Unsupported Legacy Mode API.');
+  }
   if (__DEV__) {
     console.error(
       'ReactDOM.unstable_renderSubtreeIntoContainer() is no longer supported ' +
         'in React 18. Consider using a portal instead. Until you switch to ' +
         "the createRoot API, your app will behave as if it's running React " +
-        '17. Learn more: https://reactjs.org/link/switch-to-createroot',
+        '17. Learn more: https://react.dev/link/switch-to-createroot',
     );
   }
 
@@ -388,9 +397,7 @@ export function unstable_renderSubtreeIntoContainer(
 
 export function unmountComponentAtNode(container: Container): boolean {
   if (!isValidContainerLegacy(container)) {
-    throw new Error(
-      'unmountComponentAtNode(...): Target container is not a DOM element.',
-    );
+    throw new Error('Target container is not a DOM element.');
   }
 
   if (__DEV__) {

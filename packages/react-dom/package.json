@@ -15,9 +15,8 @@
   "bugs": {
     "url": "https://github.com/facebook/react/issues"
   },
-  "homepage": "https://reactjs.org/",
+  "homepage": "https://react.dev/",
   "dependencies": {
-    "loose-envify": "^1.1.0",
     "scheduler": "^0.23.0"
   },
   "peerDependencies": {
@@ -42,11 +41,15 @@
     "test-utils.js",
     "unstable_testing.js",
     "unstable_server-external-runtime.js",
+    "react-dom.react-server.js",
     "cjs/",
     "umd/"
   ],
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "react-server": "./react-dom.react-server.js",
+      "default": "./index.js"
+    },
     "./client": "./client.js",
     "./server": {
       "workerd": "./server.edge.js",
@@ -85,10 +88,5 @@
   "browser": {
     "./server.js": "./server.browser.js",
     "./static.js": "./static.browser.js"
-  },
-  "browserify": {
-    "transform": [
-      "loose-envify"
-    ]
   }
 }

@@ -36,7 +36,10 @@ export type Options = {
 function createResponseFromOptions(options: void | Options) {
   return createResponse(
     options && options.moduleBaseURL ? options.moduleBaseURL : '',
+    null,
     options && options.callServer ? options.callServer : undefined,
+    undefined, // encodeFormAction
+    undefined, // nonce
   );
 }
 

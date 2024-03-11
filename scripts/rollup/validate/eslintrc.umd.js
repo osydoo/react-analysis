@@ -30,6 +30,9 @@ module.exports = {
 
     Reflect: 'readonly',
     globalThis: 'readonly',
+
+    FinalizationRegistry: 'readonly',
+
     // Vendor specific
     MSApp: 'readonly',
     __REACT_DEVTOOLS_GLOBAL_HOOK__: 'readonly',
@@ -56,10 +59,15 @@ module.exports = {
 
     // Temp
     AsyncLocalStorage: 'readonly',
+    async_hooks: 'readonly',
 
     // Flight Webpack
     __webpack_chunk_load__: 'readonly',
     __webpack_require__: 'readonly',
+
+    // Flight Turbopack
+    __turbopack_load__: 'readonly',
+    __turbopack_require__: 'readonly',
 
     // jest
     jest: 'readonly',

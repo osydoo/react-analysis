@@ -7,11 +7,19 @@
  * @flow
  */
 
-import type {Thenable, ReactCustomFormAction} from 'shared/ReactTypes';
+import type {
+  Thenable,
+  PendingThenable,
+  FulfilledThenable,
+  RejectedThenable,
+  ReactCustomFormAction,
+} from 'shared/ReactTypes';
+import {enableRenderableContext} from 'shared/ReactFeatureFlags';
 
 import {
   REACT_ELEMENT_TYPE,
   REACT_LAZY_TYPE,
+  REACT_CONTEXT_TYPE,
   REACT_PROVIDER_TYPE,
   getIteratorFn,
 } from 'shared/ReactSymbols';
@@ -23,10 +31,9 @@ import {
 } from 'shared/ReactSerializationErrors';
 
 import isArray from 'shared/isArray';
-import type {
-  FulfilledThenable,
-  RejectedThenable,
-} from '../../shared/ReactTypes';
+import getPrototypeOf from 'shared/getPrototypeOf';
+
+const ObjectPrototype = Object.prototype;
 
 import {usedWithSSR} from './ReactFlightClientConfig';
 
@@ -42,9 +49,14 @@ export opaque type ServerReference<T> = T;
 
 export type CallServerCallback = <A, T>(id: any, args: A) => Promise<T>;
 
+export type EncodeFormActionCallback = <A>(
+  id: any,
+  args: Promise<A>,
+) => ReactCustomFormAction;
+
 export type ServerReferenceId = any;
 
-export const knownServerReferences: WeakMap<
+const knownServerReferences: WeakMap<
   Function,
   {id: ServerReferenceId, bound: null | Thenable<Array<any>>},
 > = new WeakMap();
@@ -225,6 +237,10 @@ export function processReply(
         );
         return serializePromiseID(promiseId);
       }
+      if (isArray(value)) {
+        // $FlowFixMe[incompatible-return]
+        return value;
+      }
       // TODO: Should we the Object.prototype.toString.call() to test for cross-realm objects?
       if (value instanceof FormData) {
         if (formData === null) {
@@ -261,54 +277,63 @@ export function processReply(
         formData.append(formFieldPrefix + setId, partJSON);
         return serializeSetID(setId);
       }
-      if (!isArray(value)) {
-        const iteratorFn = getIteratorFn(value);
-        if (iteratorFn) {
-          return Array.from((value: any));
-        }
+      const iteratorFn = getIteratorFn(value);
+      if (iteratorFn) {
+        return Array.from((value: any));
       }
 
+      // Verify that this is a simple plain object.
+      const proto = getPrototypeOf(value);
+      if (
+        proto !== ObjectPrototype &&
+        (proto === null || getPrototypeOf(proto) !== null)
+      ) {
+        throw new Error(
+          'Only plain objects, and a few built-ins, can be passed to Server Actions. ' +
+            'Classes or null prototypes are not supported.',
+        );
+      }
       if (__DEV__) {
-        if (value !== null && !isArray(value)) {
-          // Verify that this is a simple plain object.
-          if ((value: any).$$typeof === REACT_ELEMENT_TYPE) {
+        if ((value: any).$$typeof === REACT_ELEMENT_TYPE) {
+          console.error(
+            'React Element cannot be passed to Server Functions from the Client.%s',
+            describeObjectForErrorMessage(parent, key),
+          );
+        } else if ((value: any).$$typeof === REACT_LAZY_TYPE) {
+          console.error(
+            'React Lazy cannot be passed to Server Functions from the Client.%s',
+            describeObjectForErrorMessage(parent, key),
+          );
+        } else if (
+          (value: any).$$typeof ===
+          (enableRenderableContext ? REACT_CONTEXT_TYPE : REACT_PROVIDER_TYPE)
+        ) {
+          console.error(
+            'React Context Providers cannot be passed to Server Functions from the Client.%s',
+            describeObjectForErrorMessage(parent, key),
+          );
+        } else if (objectName(value) !== 'Object') {
+          console.error(
+            'Only plain objects can be passed to Server Functions from the Client. ' +
+              '%s objects are not supported.%s',
+            objectName(value),
+            describeObjectForErrorMessage(parent, key),
+          );
+        } else if (!isSimpleObject(value)) {
+          console.error(
+            'Only plain objects can be passed to Server Functions from the Client. ' +
+              'Classes or other objects with methods are not supported.%s',
+            describeObjectForErrorMessage(parent, key),
+          );
+        } else if (Object.getOwnPropertySymbols) {
+          const symbols = Object.getOwnPropertySymbols(value);
+          if (symbols.length > 0) {
             console.error(
-              'React Element cannot be passed to Server Functions from the Client.%s',
+              'Only plain objects can be passed to Server Functions from the Client. ' +
+                'Objects with symbol properties like %s are not supported.%s',
+              symbols[0].description,
               describeObjectForErrorMessage(parent, key),
             );
-          } else if ((value: any).$$typeof === REACT_LAZY_TYPE) {
-            console.error(
-              'React Lazy cannot be passed to Server Functions from the Client.%s',
-              describeObjectForErrorMessage(parent, key),
-            );
-          } else if ((value: any).$$typeof === REACT_PROVIDER_TYPE) {
-            console.error(
-              'React Context Providers cannot be passed to Server Functions from the Client.%s',
-              describeObjectForErrorMessage(parent, key),
-            );
-          } else if (objectName(value) !== 'Object') {
-            console.error(
-              'Only plain objects can be passed to Client Components from Server Components. ' +
-                '%s objects are not supported.%s',
-              objectName(value),
-              describeObjectForErrorMessage(parent, key),
-            );
-          } else if (!isSimpleObject(value)) {
-            console.error(
-              'Only plain objects can be passed to Client Components from Server Components. ' +
-                'Classes or other objects with methods are not supported.%s',
-              describeObjectForErrorMessage(parent, key),
-            );
-          } else if (Object.getOwnPropertySymbols) {
-            const symbols = Object.getOwnPropertySymbols(value);
-            if (symbols.length > 0) {
-              console.error(
-                'Only plain objects can be passed to Client Components from Server Components. ' +
-                  'Objects with symbol properties like %s are not supported.%s',
-                symbols[0].description,
-                describeObjectForErrorMessage(parent, key),
-              );
-            }
           }
         }
       }
@@ -439,7 +464,7 @@ function encodeFormData(reference: any): Thenable<FormData> {
   return thenable;
 }
 
-export function encodeFormAction(
+function defaultEncodeFormAction(
   this: any => Promise<any>,
   identifierPrefix: string,
 ): ReactCustomFormAction {
@@ -488,20 +513,173 @@ export function encodeFormAction(
   };
 }
 
+function customEncodeFormAction(
+  proxy: any => Promise<any>,
+  identifierPrefix: string,
+  encodeFormAction: EncodeFormActionCallback,
+): ReactCustomFormAction {
+  const reference = knownServerReferences.get(proxy);
+  if (!reference) {
+    throw new Error(
+      'Tried to encode a Server Action from a different instance than the encoder is from. ' +
+        'This is a bug in React.',
+    );
+  }
+  let boundPromise: Promise<Array<any>> = (reference.bound: any);
+  if (boundPromise === null) {
+    boundPromise = Promise.resolve([]);
+  }
+  return encodeFormAction(reference.id, boundPromise);
+}
+
+function isSignatureEqual(
+  this: any => Promise<any>,
+  referenceId: ServerReferenceId,
+  numberOfBoundArgs: number,
+): boolean {
+  const reference = knownServerReferences.get(this);
+  if (!reference) {
+    throw new Error(
+      'Tried to encode a Server Action from a different instance than the encoder is from. ' +
+        'This is a bug in React.',
+    );
+  }
+  if (reference.id !== referenceId) {
+    // These are different functions.
+    return false;
+  }
+  // Now check if the number of bound arguments is the same.
+  const boundPromise = reference.bound;
+  if (boundPromise === null) {
+    // No bound arguments.
+    return numberOfBoundArgs === 0;
+  }
+  // Unwrap the bound arguments array by suspending, if necessary. As with
+  // encodeFormData, this means isSignatureEqual can only be called while React
+  // is rendering.
+  switch (boundPromise.status) {
+    case 'fulfilled': {
+      const boundArgs = boundPromise.value;
+      return boundArgs.length === numberOfBoundArgs;
+    }
+    case 'pending': {
+      throw boundPromise;
+    }
+    case 'rejected': {
+      throw boundPromise.reason;
+    }
+    default: {
+      if (typeof boundPromise.status === 'string') {
+        // Only instrument the thenable if the status if not defined.
+      } else {
+        const pendingThenable: PendingThenable<Array<any>> =
+          (boundPromise: any);
+        pendingThenable.status = 'pending';
+        pendingThenable.then(
+          (boundArgs: Array<any>) => {
+            const fulfilledThenable: FulfilledThenable<Array<any>> =
+              (boundPromise: any);
+            fulfilledThenable.status = 'fulfilled';
+            fulfilledThenable.value = boundArgs;
+          },
+          (error: mixed) => {
+            const rejectedThenable: RejectedThenable<number> =
+              (boundPromise: any);
+            rejectedThenable.status = 'rejected';
+            rejectedThenable.reason = error;
+          },
+        );
+      }
+      throw boundPromise;
+    }
+  }
+}
+
+export function registerServerReference(
+  proxy: any,
+  reference: {id: ServerReferenceId, bound: null | Thenable<Array<any>>},
+  encodeFormAction: void | EncodeFormActionCallback,
+) {
+  // Expose encoder for use by SSR, as well as a special bind that can be used to
+  // keep server capabilities.
+  if (usedWithSSR) {
+    // Only expose this in builds that would actually use it. Not needed on the client.
+    const $$FORM_ACTION =
+      encodeFormAction === undefined
+        ? defaultEncodeFormAction
+        : function (
+            this: any => Promise<any>,
+            identifierPrefix: string,
+          ): ReactCustomFormAction {
+            return customEncodeFormAction(
+              this,
+              identifierPrefix,
+              encodeFormAction,
+            );
+          };
+    Object.defineProperties((proxy: any), {
+      $$FORM_ACTION: {value: $$FORM_ACTION},
+      $$IS_SIGNATURE_EQUAL: {value: isSignatureEqual},
+      bind: {value: bind},
+    });
+  }
+  knownServerReferences.set(proxy, reference);
+}
+
+// $FlowFixMe[method-unbinding]
+const FunctionBind = Function.prototype.bind;
+// $FlowFixMe[method-unbinding]
+const ArraySlice = Array.prototype.slice;
+function bind(this: Function): Function {
+  // $FlowFixMe[unsupported-syntax]
+  const newFn = FunctionBind.apply(this, arguments);
+  const reference = knownServerReferences.get(this);
+  if (reference) {
+    if (__DEV__) {
+      const thisBind = arguments[0];
+      if (thisBind != null) {
+        // This doesn't warn in browser environments since it's not instrumented outside
+        // usedWithSSR. This makes this an SSR only warning which we don't generally do.
+        // TODO: Consider a DEV only instrumentation in the browser.
+        console.error(
+          'Cannot bind "this" of a Server Action. Pass null or undefined as the first argument to .bind().',
+        );
+      }
+    }
+    const args = ArraySlice.call(arguments, 1);
+    let boundPromise = null;
+    if (reference.bound !== null) {
+      boundPromise = Promise.resolve((reference.bound: any)).then(boundArgs =>
+        boundArgs.concat(args),
+      );
+    } else {
+      boundPromise = Promise.resolve(args);
+    }
+    // Expose encoder for use by SSR, as well as a special bind that can be used to
+    // keep server capabilities.
+    if (usedWithSSR) {
+      // Only expose this in builds that would actually use it. Not needed on the client.
+      Object.defineProperties((newFn: any), {
+        $$FORM_ACTION: {value: this.$$FORM_ACTION},
+        $$IS_SIGNATURE_EQUAL: {value: isSignatureEqual},
+        bind: {value: bind},
+      });
+    }
+    knownServerReferences.set(newFn, {id: reference.id, bound: boundPromise});
+  }
+  return newFn;
+}
+
 export function createServerReference<A: Iterable<any>, T>(
   id: ServerReferenceId,
   callServer: CallServerCallback,
+  encodeFormAction?: EncodeFormActionCallback,
 ): (...A) => Promise<T> {
   const proxy = function (): Promise<T> {
     // $FlowFixMe[method-unbinding]
     const args = Array.prototype.slice.call(arguments);
     return callServer(id, args);
   };
-  // Expose encoder for use by SSR.
-  if (usedWithSSR) {
-    // Only expose this in builds that would actually use it. Not needed on the client.
-    (proxy: any).$$FORM_ACTION = encodeFormAction;
-  }
-  knownServerReferences.set(proxy, {id: id, bound: null});
+  registerServerReference(proxy, {id, bound: null}, encodeFormAction);
   return proxy;
 }
